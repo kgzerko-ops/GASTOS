@@ -22,14 +22,14 @@ export const firebaseConfig = {
   apiKey:            "TU_API_KEY",
   authDomain:        "https://console.firebase.google.com/project/gastos-ticket/overview",
   projectId:         "gastos-ticket",
-  storageBucket:     "tu-proyecto.appspot.com",
-  messagingSenderId: "000000000000",
-  appId:             "1:000000000000:web:xxxxxxxxxxxxxx"
+  storageBucket:     "gastos-ticket.appspot.com",
+  messagingSenderId: "123456789012",
+  appId:             "1:123456789012:web:abc123def456"
 };
 
 export const cloudinaryConfig = {
   cloudName:    "dd7b5unem",
-  uploadPreset: "u7s9ytmy"   // unsigned preset
+  uploadPreset: "gastospro_unsigned"   // unsigned preset
 };
 
 // OCR — claves opcionales. Si no las pones, se usa Tesseract local.
