@@ -41,7 +41,7 @@ export const defaultOcrKeys = {
 
 // Primer email que al registrarse recibe rol "admin" automáticamente.
 // Déjalo vacío ("") si prefieres asignar admin manualmente desde Firestore.
-export const bootstrapAdminEmail = "";
+export const bootstrapAdminEmail = "kgzerko@gmail.com";
 
 // Nombre de empresa por defecto para usuarios nuevos sin asignación.
-export const defaultCompanyName = "Mi Empresa";
+export const defaultCompanyName = "CR";
