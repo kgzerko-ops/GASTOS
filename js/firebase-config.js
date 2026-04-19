@@ -20,31 +20,24 @@
 // CONFIGURACIÓN FIREBASE + CLOUDINARY
 // ═══════════════════════════════════════════════════════════════
 
-export const firebaseConfig = {
-  apiKey: "AIzaSyDlYo8e_GHhJCWvNyU5GGC2XUMk-76M08A",
-  authDomain: "gastos-ticket.firebaseapp.com",
-  projectId: "gastos-ticket",
-  storageBucket: "gastos-ticket.firebasestorage.app",
-  messagingSenderId: "304506437977",
-  appId: "1:304506437977:web:845e58788a9a12aa730c48",
-  measurementId: "G-ZBW5CC3ZMK"
+const firebaseConfig = {
+  apiKey: "AIzaSyDlxwt3s6RuJBpHI6JcVVt_sYOJWlwv61g",
+  authDomain: "gastospro-final.firebaseapp.com",
+  projectId: "gastospro-final",
+  storageBucket: "gastospro-final.firebasestorage.app",
+  messagingSenderId: "305811655043",
+  appId: "1:305811655043:web:42b9baae6b829c33634eb6"
 };
 
 export const cloudinaryConfig = {
-  cloudName:    "dd7b5unem",
+  cloudName: "dd7b5unem",
   uploadPreset: "u7s9ytmy"
 };
 
-// OCR — claves opcionales. Si no las pones, se usa Tesseract local.
-// El usuario también puede configurarlas desde la pestaña "Ajustes".
+export const bootstrapAdminEmail = "kgzerko@gmail.com";
+export const defaultCompanyName = "SMART CONGRESS";
+
 export const defaultOcrKeys = {
-  ocrSpace: "",   // https://ocr.space/ocrapi  (usa "helloworld" para probar, tiene límite muy bajo)
-  gemini:   ""    // https://aistudio.google.com/apikey
+  gemini: "",
+  ocrSpace: ""
 };
-
-// Primer email que al registrarse recibe rol "admin" automáticamente.
-// Déjalo vacío ("") si prefieres asignar admin manualmente desde Firestore.
-export const bootstrapAdminEmail = "";
-
-// Nombre de empresa por defecto para usuarios nuevos sin asignación.
-export const defaultCompanyName = "Mi Empresa";
