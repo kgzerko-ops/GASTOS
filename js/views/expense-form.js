@@ -5,7 +5,7 @@
 
 import { openModal, showToast, confirmDialog, escapeHtml } from '../components/modal.js';
 import { createExpense, updateExpense, getAllEvents, getAllBudgets, findDuplicate, isMonthClosed } from '../db.js';
-import { uploadTicketImage, compressImage } from '../storage.js';
+import { uploadTicketImage, compressImage, ensureJpegForOcr } from '../storage.js';
 import { todayIso, validateNif, fmtEur, fmtDate, monthKey } from '../utils/format.js';
 import { checkCoherencia } from '../utils/sanitize.js';
 import { CATEGORIAS, FORMAS_PAGO } from '../utils/filters.js';
@@ -322,10 +322,12 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
   });
 
   async function handleTicketFile(file, runOcr) {
+    let uploadedUrl = null;
     try {
       showToast('Subiendo imagen…', 'info', 1500);
       const compressed = file.type.startsWith('image/') ? await compressImage(file) : file;
       const upload = await uploadTicketImage(compressed);
+      uploadedUrl = upload.secure_url;
       form.ticketUrls.push({ url: upload.secure_url, publicId: upload.public_id });
       renderGallery();
     } catch (err) {
@@ -333,7 +335,17 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
       return;
     }
     if (!runOcr) return;
-    const extracted = await openScanDialog(file);
+
+    // Antes del OCR: asegurarse de tener un JPEG/PDF válido
+    // (iPhone HEIC, orientación EXIF, formatos raros → Cloudinary nos da JPG limpio)
+    let ocrFile = file;
+    try {
+      ocrFile = await ensureJpegForOcr(file, uploadedUrl);
+    } catch (e) {
+      console.warn('ensureJpegForOcr falló, uso original:', e);
+    }
+
+    const extracted = await openScanDialog(ocrFile);
     if (!extracted) return;
 
     // Aplicar campos

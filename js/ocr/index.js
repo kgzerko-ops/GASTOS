@@ -91,16 +91,45 @@ export async function scanTicket(file, onProgress = () => {}) {
 
     } catch (err) {
       console.warn(`OCR ${provider} falló:`, err);
-      if (provider !== 'tesseract') {
+
+      // Detectar error de cuota de Gemini para mensaje claro
+      const msg = String(err?.message || '');
+      if (msg.includes('429') || msg.toLowerCase().includes('quota')) {
+        throw new Error(
+          'Has superado la cuota gratuita de Gemini (15 peticiones/min o 1.500/día).\n\n' +
+          'Opciones:\n' +
+          '• Espera unos minutos o hasta mañana\n' +
+          '• Cambia a "OCR.space" en Ajustes (25k/mes gratis)\n' +
+          '• Genera una nueva API key en aistudio.google.com/apikey'
+        );
+      }
+      if (msg.includes('401') || msg.toLowerCase().includes('api key')) {
+        throw new Error(
+          'La clave de Gemini no es válida.\n\n' +
+          'Ve a Ajustes y verifica que la API key está bien pegada (empieza por AIzaSy).'
+        );
+      }
+
+      // Tesseract NO sabe leer PDFs — no intentar fallback en ese caso
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+      if (provider !== 'tesseract' && !isPdf) {
         onProgress({ status: 'Reintentando con Tesseract…', progress: 0.1 });
-        const text = await ocrWithTesseract(file, (p) => {
-          if (p.status === 'recognizing text') {
-            onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
-          }
-        });
-        const parsed = parseTicketText(text);
-        onProgress({ status: 'Listo (fallback)', progress: 1 });
-        return parsed;
+        try {
+          const text = await ocrWithTesseract(file, (p) => {
+            if (p.status === 'recognizing text') {
+              onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
+            }
+          });
+          const parsed = parseTicketText(text);
+          onProgress({ status: 'Listo (fallback)', progress: 1 });
+          return parsed;
+        } catch (fallbackErr) {
+          console.warn('Fallback Tesseract también falló:', fallbackErr);
+          throw err;  // lanzamos el error original (más informativo)
+        }
+      }
+      if (isPdf && provider !== 'gemini') {
+        throw new Error('Este proveedor OCR no soporta PDFs. Cambia a Gemini en Ajustes, o sube el ticket como imagen JPG/PNG.');
       }
       throw err;
     }
