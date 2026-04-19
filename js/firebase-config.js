@@ -19,7 +19,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 export const firebaseConfig = {
-  apiKey: "AIzaSyAD5zUzaUuCo-ljLhnSu7W8DFU55aOEzzE",
+  apiKey: "AIzaSyDjQy5bZ6qI6_OPTk2_5efiHzwAFEI-48Q",
   authDomain: "gastos-ticket.firebaseapp.com",
   projectId: "gastos-ticket",
   storageBucket: "gastos-ticket.firebasestorage.app",
