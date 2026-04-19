@@ -30,7 +30,7 @@ export const firebaseConfig = {
 
 export const cloudinaryConfig = {
   cloudName:    "dd7b5unem",
-  uploadPreset: "**Unsigned**"   // unsigned preset
+  uploadPreset: "u7s9ytmy"
 };
 
 // OCR — claves opcionales. Si no las pones, se usa Tesseract local.
