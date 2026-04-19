@@ -4,8 +4,9 @@
 
 import {
   getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, getDocs,
-  query, where, orderBy, onSnapshot, serverTimestamp, getDoc, setDoc
+  query, where, orderBy, onSnapshot, serverTimestamp, getDoc, setDoc, limit
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { filterVisibleExpenses } from './roles.js';
 
 let db;
 const listeners = new Map(); // key → unsubscribe
@@ -82,30 +83,50 @@ export async function getExpense(id) {
 
 /**
  * Suscribe a los gastos aplicando los filtros de permisos del usuario.
- * Retorna función para desuscribir.
+ * Seguridad real en las Reglas de Firestore; aquí filtramos cliente para UI.
  */
 export function subscribeExpenses(user, callback) {
-  let q = collection(db, 'expenses');
-
-  if (user.role !== 'admin' && !user.puedeVerTodos) {
-    // Usuario normal: solo sus propios gastos
-    q = query(q, where('createdByUid', '==', user.uid), orderBy('fecha', 'desc'));
-  } else {
-    q = query(q, orderBy('fecha', 'desc'));
-  }
+  const q = query(collection(db, 'expenses'), orderBy('fecha', 'desc'));
 
   const unsub = onSnapshot(q, (snap) => {
-    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    idbSet('expenses-' + user.uid, docs).catch(() => {});
-    callback(docs);
+    const allDocs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const visible = filterVisibleExpenses(allDocs, user);
+    window.__lastExpenses = visible;
+    idbSet('expenses-' + user.uid, visible).catch(() => {});
+    callback(visible);
   }, async (err) => {
     console.error('subscribeExpenses error:', err);
-    // Fallback a caché
     const cached = await idbGet('expenses-' + user.uid);
     if (cached) callback(cached);
   });
 
   return unsub;
+}
+
+/**
+ * Busca un posible duplicado: mismo NIF + mismo total + misma fecha.
+ */
+export async function findDuplicate({ nifProveedor, total, fecha, excludeId = null }) {
+  if (!nifProveedor || !total || !fecha) return null;
+  try {
+    const q = query(
+      collection(db, 'expenses'),
+      where('nifProveedor', '==', nifProveedor),
+      where('fecha', '==', fecha),
+      limit(5)
+    );
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      if (d.id === excludeId) continue;
+      const data = d.data();
+      if (Math.abs(Number(data.total) - Number(total)) < 0.02) {
+        return { id: d.id, ...data };
+      }
+    }
+  } catch (err) {
+    console.warn('findDuplicate falló:', err);
+  }
+  return null;
 }
 
 // ── Users (admin) ───────────────────────────────
@@ -155,4 +176,129 @@ export async function saveEvent(data, id = null) {
 
 export async function deleteEvent(id) {
   await deleteDoc(doc(db, 'events', id));
+}
+
+// ── Cierres mensuales ───────────────────────────
+function closureId(empresa, yyyymm) {
+  const slug = String(empresa).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return `${slug}__${yyyymm}`;
+}
+
+export async function isMonthClosed(empresa, yyyymm) {
+  try {
+    const snap = await getDoc(doc(db, 'closures', closureId(empresa, yyyymm)));
+    return snap.exists() && snap.data().closed === true;
+  } catch { return false; }
+}
+
+export async function getAllClosures() {
+  const snap = await getDocs(collection(db, 'closures'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function closeMonth(empresa, yyyymm, adminUid, adminEmail) {
+  await setDoc(doc(db, 'closures', closureId(empresa, yyyymm)), {
+    empresa, yyyymm, closed: true,
+    closedBy: adminEmail, closedByUid: adminUid,
+    closedAt: serverTimestamp()
+  });
+}
+
+export async function reopenMonth(empresa, yyyymm) {
+  await deleteDoc(doc(db, 'closures', closureId(empresa, yyyymm)));
+}
+
+// ── Comentarios ─────────────────────────────────
+export async function addComment(expenseId, { uid, email, name, text }) {
+  await addDoc(collection(db, 'expenses', expenseId, 'comments'), {
+    uid, email, name, text,
+    createdAt: serverTimestamp()
+  });
+}
+
+export async function listComments(expenseId) {
+  const q = query(collection(db, 'expenses', expenseId, 'comments'), orderBy('createdAt', 'asc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// ── Recurrentes ─────────────────────────────────
+export async function getAllRecurring() {
+  const snap = await getDocs(collection(db, 'recurring'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function saveRecurring(data, id = null) {
+  if (id) {
+    await updateDoc(doc(db, 'recurring', id), { ...data, updatedAt: serverTimestamp() });
+    return id;
+  }
+  const ref = await addDoc(collection(db, 'recurring'), {
+    ...data, createdAt: serverTimestamp(), active: true
+  });
+  return ref.id;
+}
+
+export async function deleteRecurring(id) {
+  await deleteDoc(doc(db, 'recurring', id));
+}
+
+/**
+ * Materializa recurrentes: crea un gasto mensual si aún no existe.
+ * Se llama una vez al día al arrancar la app (solo admin).
+ */
+export async function materializeRecurring(user) {
+  const recurrings = await getAllRecurring();
+  if (recurrings.length === 0) return 0;
+
+  const today = new Date();
+  const yyyymm = today.toISOString().slice(0, 7);
+  const dayStr = today.toISOString().slice(0, 10);
+
+  // Buscar gastos ya materializados este mes
+  const q = query(
+    collection(db, 'expenses'),
+    where('fecha', '>=', yyyymm + '-01'),
+    where('fecha', '<=', yyyymm + '-31')
+  );
+  const snap = await getDocs(q);
+  const existing = new Set(
+    snap.docs.map(d => d.data().recurringId).filter(Boolean)
+  );
+
+  let created = 0;
+  for (const r of recurrings) {
+    if (r.active === false) continue;
+    const dia = Number(r.diaMes || 1);
+    if (today.getDate() < dia) continue;
+    if (existing.has(r.id)) continue;
+
+    const fechaAlta = `${yyyymm}-${String(Math.min(dia, 28)).padStart(2, '0')}`;
+    await addDoc(collection(db, 'expenses'), {
+      fecha: fechaAlta,
+      proveedor: r.proveedor,
+      nifProveedor: r.nifProveedor || '',
+      concepto: r.concepto || '',
+      categoria: r.categoria || 'Otros',
+      empresa: r.empresa,
+      formaPago: r.formaPago || 'Domiciliación',
+      baseImponible: Number(r.baseImponible || 0),
+      tipoIva: Number(r.tipoIva || 21),
+      ivaTotal: Number(r.ivaTotal || 0),
+      tipoIrpf: Number(r.tipoIrpf || 0),
+      irpfTotal: Number(r.irpfTotal || 0),
+      total: Number(r.total || 0),
+      estado: 'pendiente',
+      recurringId: r.id,
+      recurringName: r.nombre || r.proveedor,
+      ticketUrls: [],
+      createdByUid: user.uid,
+      createdByEmail: user.email,
+      createdByName: 'Auto (recurrente)',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    created++;
+  }
+  return created;
 }

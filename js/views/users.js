@@ -5,6 +5,7 @@
 import { getAllUsers, updateUserProfile } from '../db.js';
 import { openModal, showToast, confirmDialog, escapeHtml } from '../components/modal.js';
 import { fmtDateTime } from '../utils/format.js';
+import { ROLE_LABELS } from '../roles.js';
 
 export async function renderUsers(container, state) {
   if (state.user.role !== 'admin') {
@@ -68,8 +69,10 @@ async function loadUsers(container) {
             <div class="user-name">
               ${escapeHtml(u.displayName || u.email)}
               ${u.role === 'admin' ? '<span class="badge badge-approved" style="margin-left:6px">ADMIN</span>' : ''}
+              ${u.role === 'colaborador' ? '<span class="badge" style="margin-left:6px;background:#eef2ff;color:#4338ca">COLABORADOR</span>' : ''}
+              ${u.role === 'visor' ? '<span class="badge" style="margin-left:6px;background:#f5f5f4;color:#57534e">VISOR</span>' : ''}
               ${u.active === false ? '<span class="badge badge-pending" style="margin-left:6px">PENDIENTE</span>' : ''}
-              ${u.puedeVerTodos ? '<span class="badge badge-approved" style="margin-left:6px;background:#eef2ff;color:#4338ca">VE TODO</span>' : ''}
+              ${u.puedeVerTodos ? '<span class="badge badge-approved" style="margin-left:6px;background:#ecfdf5">VE TODO</span>' : ''}
             </div>
             <div class="user-meta">${escapeHtml(u.email)} · ${escapeHtml(u.empresa || '—')}</div>
           </div>
@@ -121,8 +124,9 @@ function openUserEditor(user, onSaved) {
       <div class="field">
         <label>Rol</label>
         <select class="select" id="u-role">
-          <option value="user" ${user.role !== 'admin' ? 'selected' : ''}>Usuario</option>
-          <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Administrador</option>
+          ${Object.entries(ROLE_LABELS).map(([value, label]) => `
+            <option value="${value}" ${user.role === value || (value === 'user' && !user.role) ? 'selected' : ''}>${label}</option>
+          `).join('')}
         </select>
       </div>
       <div class="field">
@@ -132,6 +136,13 @@ function openUserEditor(user, onSaved) {
           <option value="false" ${user.active === false ? 'selected' : ''}>✗ Bloqueado</option>
         </select>
       </div>
+    </div>
+    <div class="alert alert-info" style="font-size:12px">
+      <strong>Roles:</strong><br>
+      · <b>Administrador</b>: ve y aprueba todo, gestiona usuarios, cierra meses.<br>
+      · <b>Colaborador</b>: ve gastos de empresas en "Empresas visibles"; al cargar elige de esa lista.<br>
+      · <b>Usuario</b>: solo ve y carga gastos propios en su empresa por defecto.<br>
+      · <b>Visor</b>: solo lectura de las empresas visibles, no puede cargar nada.
     </div>
     <div class="field">
       <label style="display:flex;align-items:center;gap:8px;text-transform:none">

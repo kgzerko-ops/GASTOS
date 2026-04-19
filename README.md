@@ -1,211 +1,244 @@
-# GastósPro
+# GastósPro v2
 
-Gestión de gastos con formato legal español. Stack: **ES6 nativo + Firestore + Cloudinary + OCR híbrido**. Sin bundler, sin framework. Listo para GitHub Pages.
+Gestión de gastos con formato legal español. Multi-usuario en tiempo real, OCR de tickets, roles granulares, export Excel/ZIP, libro IVA trimestral, cierres mensuales, recurrentes, kilometraje, presupuestos, aprobaciones.
 
----
-
-## Características
-
-- **Autenticación** Google + email/password con roles `admin` / `user`
-- **Escaneo de tickets** con 3 motores OCR intercambiables (Gemini, OCR.space, Tesseract local)
-- **Campos fiscales españoles**: NIF/CIF, base imponible, IVA (0/4/10/21%), IRPF, forma de pago
-- **Multi-usuario** en tiempo real con permisos granulares (ver solo los míos / por empresa / todos)
-- **Eventos/proyectos** con presupuesto y tracking de gasto
-- **Presupuesto mensual por empresa** con alertas y fuerza de estado pendiente al superarse
-- **Panel con KPIs**, gráficos mensuales, reportes admin con comparativa mes actual vs anterior
-- **Export a Excel** real (.xlsx) con totales y formato de euros
-- **Filtros**: Hoy / Semana / Mes / Personalizado / Todos + búsqueda + estado + categoría + empresa + evento
-- **PWA instalable** en móvil y escritorio
-- **Caché IndexedDB** para consulta offline
+Stack: **ES6 nativo** (sin bundler) · **Firestore** · **Cloudinary** · **GitHub Pages** · OCR híbrido (Gemini / OCR.space / Tesseract).
 
 ---
 
-## Setup (10 minutos)
+## 🆕 Novedades de v2
+
+- **4 roles** (admin / colaborador / usuario / visor) con permisos diferenciados
+- **ZIP con tickets** — Excel + carpeta de imágenes para la gestoría
+- **Detección de duplicados** al guardar (mismo NIF + fecha + total)
+- **Múltiples fotos por gasto** (hasta 5) — anverso/reverso, multipágina
+- **Libro IVA trimestral** (modelo 303) con 3 hojas: facturas, resumen por tipo, casillas
+- **Cierres mensuales** bloqueados — solo admin modifica gastos cerrados
+- **Gastos recurrentes** — alquileres, nóminas, suministros generados auto cada mes
+- **Kilometraje** con tarifa €/km configurable (0,26 € por defecto, RD 2023)
+- **Comentarios** por gasto — hilo entre cargador y aprobador
+- **Ranking colaboradores** — admin ve quién ha cargado más este mes
+- **Badge rojo** en tab "Gastos" con pendientes de aprobar (solo admin)
+- **Kilometraje** como tipo especial de gasto (FAB con menú)
+
+---
+
+## 🚀 Puesta en marcha
 
 ### 1. Firebase
 
-1. Ir a [console.firebase.google.com](https://console.firebase.google.com) → **Add project**
-2. En el proyecto:
-   - **Authentication** → Sign-in method → habilitar **Google** y **Email/Password**
-   - **Firestore Database** → Create database → modo **production** (region: europe-west)
-3. **Project Settings** (⚙️) → **Your apps** → icono `</>` → registrar app web y copiar el objeto `firebaseConfig`
+1. Crea proyecto en https://console.firebase.google.com/
+2. **Authentication** → Sign-in method → activa Email/Password + Google
+3. **Firestore Database** → Create → modo producción, región `eur3`
+4. **Project settings** (⚙️) → Your apps → Add web app → copia la config
 
-### 2. Cloudinary
-
-1. Cuenta gratuita en [cloudinary.com](https://cloudinary.com) (25 GB free)
-2. **Settings** → **Upload** → **Add upload preset**
-   - Signing Mode: **Unsigned**
-   - Folder: `gastospro/tickets` (opcional)
-   - Guardar y copiar el **preset name**
-3. Anotar también el **Cloud name** (Dashboard → Account Details)
-
-### 3. Configurar la app
-
-Editar `js/firebase-config.js`:
-
-```js
-export const firebaseConfig = {
-  apiKey: "…", authDomain: "…", projectId: "…",
-  storageBucket: "…", messagingSenderId: "…", appId: "…"
-};
-
-export const cloudinaryConfig = {
-  cloudName:    "tu-cloud-name",
-  uploadPreset: "tu-preset-unsigned"
-};
-
-export const bootstrapAdminEmail = "tu@email.com";  // se auto-crea como admin al registrarse
-export const defaultCompanyName = "Mi Empresa SL";
-```
-
-### 4. Reglas de Firestore
-
-**Firestore Database → Rules**, pegar y publicar:
+Aplica estas **reglas de seguridad** (Firestore Rules):
 
 ```
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isSignedIn() { return request.auth != null; }
-    function isActive() {
-      return isSignedIn() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
-    }
-    function isAdmin() {
-      return isActive() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
-    function canSeeAll() {
-      return isActive() && (isAdmin() ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.puedeVerTodos == true);
-    }
+    function getUser() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return isSignedIn() && getUser().role == 'admin'; }
+    function isActive() { return isSignedIn() && getUser().active == true; }
+    function isVisor() { return isSignedIn() && getUser().role == 'visor'; }
+    function canWrite() { return isActive() && !isVisor(); }
 
-    // Perfiles: cada usuario lee/crea el suyo; admin modifica cualquiera
     match /users/{uid} {
-      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow read:   if isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow create: if isSignedIn() && request.auth.uid == uid;
-      allow update, delete: if isAdmin() ||
-        (request.auth.uid == uid &&
-         !(request.resource.data.role != resource.data.role ||
-           request.resource.data.active != resource.data.active ||
-           request.resource.data.puedeVerTodos != resource.data.puedeVerTodos));
+      allow update: if isAdmin() || (request.auth.uid == uid
+                       && !('role' in request.resource.data.diff(resource.data).affectedKeys())
+                       && !('active' in request.resource.data.diff(resource.data).affectedKeys())
+                       && !('puedeVerTodos' in request.resource.data.diff(resource.data).affectedKeys()));
+      allow delete: if isAdmin();
     }
 
-    // Gastos
     match /expenses/{id} {
-      allow read: if isActive() &&
-        (canSeeAll() || resource.data.createdByUid == request.auth.uid);
-      allow create: if isActive() &&
-        request.resource.data.createdByUid == request.auth.uid;
-      allow update: if isActive() &&
-        (isAdmin() || resource.data.createdByUid == request.auth.uid);
-      allow delete: if isActive() &&
-        (isAdmin() || resource.data.createdByUid == request.auth.uid);
+      allow read:   if isActive();
+      allow create: if canWrite() && request.resource.data.createdByUid == request.auth.uid;
+      allow update: if isAdmin() || (canWrite() && resource.data.createdByUid == request.auth.uid);
+      allow delete: if isAdmin() || (canWrite() && resource.data.createdByUid == request.auth.uid);
+
+      match /comments/{cid} {
+        allow read:   if isActive();
+        allow create: if canWrite() && request.resource.data.uid == request.auth.uid;
+        allow delete: if isAdmin();
+      }
     }
 
-    // Presupuestos y eventos: solo admin escribe, activos leen
     match /budgets/{id} {
-      allow read: if isActive();
+      allow read:  if isSignedIn();
       allow write: if isAdmin();
     }
+
     match /events/{id} {
-      allow read: if isActive();
-      allow write: if isActive();
+      allow read:  if isActive();
+      allow write: if canWrite();
+    }
+
+    match /closures/{id} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /recurring/{id} {
+      allow read:  if isActive();
+      allow write: if isAdmin();
     }
   }
 }
 ```
 
-### 5. Probar local
+### 2. Cloudinary
 
-```bash
-# Cualquier servidor HTTP estático sirve (no abras el index.html como file:// porque los módulos ES6 no cargan)
-python3 -m http.server 8080
-# o
-npx serve .
+1. Crea cuenta gratis en https://cloudinary.com (25 GB)
+2. **Settings → Upload → Upload presets → Add upload preset**
+3. Signing Mode: **Unsigned** ⚠️ importante
+4. Folder: `gastospro/tickets`
+5. Copia el **cloud_name** (Dashboard arriba) y el **preset name**
+
+### 3. Configurar la app
+
+Edita `js/firebase-config.js` con tus valores:
+
+```javascript
+export const firebaseConfig = {
+  apiKey: "AIzaSy...",
+  authDomain: "xxx.firebaseapp.com",
+  projectId: "xxx",
+  storageBucket: "xxx.appspot.com",
+  messagingSenderId: "00000",
+  appId: "1:00000:web:xxx"
+};
+
+export const cloudinaryConfig = {
+  cloudName: "tu-cloud",
+  uploadPreset: "tu-preset"
+};
+
+export const bootstrapAdminEmail = "tu@email.com";
+export const defaultCompanyName = "Mi Empresa";
 ```
 
-Abrir `http://localhost:8080`.
-
-### 6. Desplegar en GitHub Pages
+### 4. Deploy en GitHub Pages
 
 ```bash
-git init
 git add .
-git commit -m "GastósPro v1"
-git remote add origin git@github.com:tu-usuario/gastospro.git
-git push -u origin main
+git commit -m "GastósPro v2"
+git push
 ```
 
-En el repo → **Settings → Pages → Source: main / root**. Tarda 1-2 min.
+En GitHub: **Settings → Pages → Source: main / root** → Save.
 
-**Añadir el dominio de Pages a Firebase:**
-Authentication → Settings → Authorized domains → `tu-usuario.github.io`.
+⚠️ Añade tu dominio (`tu-usuario.github.io`) a **Firebase Auth → Settings → Authorized domains**.
 
----
+### 5. OCR (opcional)
 
-## OCR: cómo elegir el motor
-
-| Motor | Precisión en tickets ES | Setup | Coste |
-|---|---|---|---|
-| **Gemini 2.0 Flash** | ⭐⭐⭐⭐⭐ | API key gratis | Free tier generoso |
-| **OCR.space** | ⭐⭐⭐ | API key opcional | 25k req/mes gratis |
-| **Tesseract.js** | ⭐⭐ | 0 config | Totalmente local |
-
-Cada usuario elige el suyo desde la pestaña **Ajustes** → no hace falta recompilar.
+Desde **Ajustes** dentro de la app, elige el motor y añade la API key si procede:
+- **Gemini Vision** (mejor precisión): https://aistudio.google.com/apikey
+- **OCR.space** (25k/mes gratis): https://ocr.space/ocrapi
+- **Tesseract.js** (local, sin key, por defecto)
 
 ---
 
-## Arquitectura
+## 👥 Roles
+
+| Rol | Cargar | Ver | Aprobar | Admin |
+|-----|--------|-----|---------|-------|
+| **Administrador** | todo | todo | sí | sí |
+| **Colaborador** | en empresas visibles | de empresas visibles | no | no |
+| **Usuario** | su empresa | sus gastos | no | no |
+| **Visor** | no | empresas visibles | no | no |
+
+Cada nuevo usuario queda **pendiente** hasta que un admin lo active desde la pestaña "Usuarios".
+
+---
+
+## 📋 Funcionalidades principales
+
+- Login email/contraseña o Google con aprobación manual del admin
+- **Panel** con KPIs y gráfico últimos 6 meses
+- Tickets con campos legales ES (NIF, IVA 0/4/10/21%, IRPF, forma pago)
+- **Escaneo OCR** con extracción automática y confirmación antes de guardar
+- Multi-foto por gasto (anverso/reverso o factura multipágina)
+- Filtros Hoy/Semana/Mes/Personalizado + búsqueda + estado + categoría + empresa + evento
+- Export **Excel** simple o **ZIP** (Excel + imágenes en carpeta)
+- **Libro IVA trimestral** (modelo 303) con 3 hojas
+- **Presupuesto mensual por empresa** con alerta 80% y pendiente al 100%
+- **Cierres mensuales** — admin bloquea meses tras presentar impuestos
+- **Recurrentes** — alquileres/suministros se crean automáticos cada mes
+- **Kilometraje** con auto-cálculo €/km
+- **Comentarios** por gasto — hilo conversacional
+- **Eventos/proyectos** para agrupar gastos
+- **Aprobación** con nota obligatoria en rechazos
+- **Ranking** colaboradores del mes (solo admin)
+- Detección de duplicados al guardar
+- Tiempo real con `onSnapshot` + caché offline IndexedDB
+- PWA instalable
+
+---
+
+## 🗂 Estructura
 
 ```
-index.html                → shell + importmap
-css/styles.css            → tema oscuro profesional
-js/
-├── app.js                → bootstrap + router de pestañas
-├── firebase-config.js    → ⚠️ credenciales
-├── auth.js               → login + perfil users/{uid}
-├── db.js                 → Firestore wrapper + caché IndexedDB
-├── storage.js            → upload a Cloudinary con compresión
-├── ocr/
-│   ├── index.js          → dispatcher con fallback
-│   ├── tesseract.js      → local (CDN)
-│   ├── ocrspace.js       → API REST
-│   ├── gemini.js         → API con extracción JSON estructurada
-│   └── parser.js         → regex para texto OCR → campos
-├── views/
-│   ├── dashboard.js      → panel con KPIs
-│   ├── expenses.js       → lista + filtros + acciones
-│   ├── expense-form.js   → formulario alta/edición
-│   ├── scan-dialog.js    → modal de progreso OCR
-│   ├── users.js          → admin: gestión de usuarios
-│   ├── reports.js        → admin: gráficos + comparativa
-│   ├── budgets.js        → admin: presupuestos + eventos
-│   └── settings.js       → OCR provider + API keys
-├── components/
-│   ├── modal.js          → modal + toast + confirm
-│   └── charts.js         → Chart.js wrapper
-└── utils/
-    ├── format.js         → €, fechas, NIF validator
-    ├── filters.js        → filtrado por período + totales
-    └── export-xlsx.js    → SheetJS
+gastospro/
+├── index.html
+├── manifest.json
+├── css/styles.css
+├── README.md
+└── js/
+    ├── app.js              # router + bootstrap
+    ├── firebase-config.js  # ⚠ rellenar
+    ├── auth.js             # Firebase Auth + perfiles
+    ├── db.js               # Firestore + IndexedDB + cierres + recurrentes
+    ├── roles.js            # 4 roles y permisos
+    ├── storage.js          # upload Cloudinary
+    ├── ocr/
+    │   ├── index.js        # dispatcher
+    │   ├── tesseract.js
+    │   ├── ocrspace.js
+    │   ├── gemini.js
+    │   └── parser.js       # texto → campos fiscales
+    ├── views/
+    │   ├── dashboard.js    # Panel
+    │   ├── expenses.js     # Lista de gastos + ZIP
+    │   ├── expense-form.js # Formulario crear/editar
+    │   ├── scan-dialog.js  # Progreso OCR
+    │   ├── users.js        # Admin usuarios (4 roles)
+    │   ├── reports.js      # Reportes + ranking
+    │   ├── budgets.js      # Presupuestos por empresa
+    │   ├── settings.js     # Ajustes OCR
+    │   ├── closures.js     # Cierres mensuales
+    │   ├── iva.js          # Libro IVA trimestral
+    │   ├── recurring.js    # Gastos recurrentes
+    │   ├── mileage.js      # Kilometraje
+    │   └── comments-dialog.js
+    ├── components/
+    │   ├── modal.js
+    │   └── charts.js
+    └── utils/
+        ├── format.js       # € / fechas / NIF
+        ├── filters.js      # Filtros por período
+        ├── export-xlsx.js  # Excel simple
+        ├── export-zip.js   # ZIP con tickets
+        └── iva-book.js     # Modelo 303
 ```
 
 ---
 
-## Flujo de usuarios nuevos
+## 🛠 Troubleshooting
 
-1. Usuario abre la URL y se registra (Google o email)
-2. Se crea perfil en `users/{uid}` con `active: false`
-3. Usuario ve pantalla **"Acceso pendiente"**
-4. El admin va a pestaña **Usuarios** → abre al usuario → marca **Activo** + configura empresa + permisos
-5. El usuario recarga y ya entra normal
-
-El email de `bootstrapAdminEmail` es la excepción: al registrarse se crea activo y admin.
+- **"Configuración pendiente"** → edita `js/firebase-config.js`
+- **Spinner infinito** → revisa consola; suele ser Firestore sin crear o reglas mal
+- **auth/invalid-api-key** → key mal pegada, debe empezar por `AIzaSy`
+- **auth/unauthorized-domain** → añade tu dominio GH Pages a Firebase Auth → Settings → Authorized domains
+- **Permission denied en Firestore** → reglas + usuario con `active: true`
+- **No soy admin** → Firestore Console → `users/{uid}` → `role: "admin"`, `active: true`
+- **Cloudinary 401** → preset debe ser **Unsigned**
+- **Índice Firestore** → si pide crear un índice compuesto, la consola da link directo
 
 ---
 
-## Licencia
-
-MIT. Úsalo, modifícalo, véndelo.
+Licencia: uso propio. Integrable con BeUnifyT / ControlUnificado.

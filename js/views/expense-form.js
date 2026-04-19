@@ -1,16 +1,26 @@
 // ═══════════════════════════════════════════════════════════════
-// FORMULARIO DE GASTO — alta / edición
+// FORMULARIO DE GASTO — alta / edición (v2)
+// Multi-fotos, duplicados, empresa según rol, bloqueo cierres
 // ═══════════════════════════════════════════════════════════════
 
-import { openModal, showToast, escapeHtml } from '../components/modal.js';
-import { createExpense, updateExpense, getAllEvents, getAllBudgets } from '../db.js';
+import { openModal, showToast, confirmDialog, escapeHtml } from '../components/modal.js';
+import { createExpense, updateExpense, getAllEvents, getAllBudgets, findDuplicate, isMonthClosed } from '../db.js';
 import { uploadTicketImage, compressImage } from '../storage.js';
-import { todayIso, validateNif } from '../utils/format.js';
+import { todayIso, validateNif, fmtEur, fmtDate, monthKey } from '../utils/format.js';
 import { CATEGORIAS, FORMAS_PAGO } from '../utils/filters.js';
 import { openScanDialog } from './scan-dialog.js';
-import { fmtEur, monthKey } from '../utils/format.js';
+import { availableCompanies, canCreate } from '../roles.js';
+
+const MAX_FOTOS = 5;
 
 function emptyForm(user, prefill = {}) {
+  let urls = [];
+  if (prefill.ticketUrls && Array.isArray(prefill.ticketUrls)) {
+    urls = prefill.ticketUrls.slice();
+  } else if (prefill.ticketUrl) {
+    urls = [{ url: prefill.ticketUrl, publicId: prefill.ticketPublicId || '' }];
+  }
+  const companies = availableCompanies(user);
   return {
     fecha:          prefill.fecha || todayIso(),
     proveedor:      prefill.proveedor || '',
@@ -25,30 +35,33 @@ function emptyForm(user, prefill = {}) {
     total:          prefill.total ?? 0,
     formaPago:      prefill.formaPago || 'Tarjeta',
     numeroDocumento: prefill.numeroDocumento || '',
-    empresa:        prefill.empresa || user.empresa || '',
+    empresa:        prefill.empresa || companies[0] || user.empresa || '',
     eventoId:       prefill.eventoId || '',
     eventoNombre:   prefill.eventoNombre || '',
     estado:         prefill.estado || 'pendiente',
-    ticketUrl:      prefill.ticketUrl || '',
-    ticketPublicId: prefill.ticketPublicId || '',
+    ticketUrls:     urls,
     notas:          prefill.notas || ''
   };
 }
 
-/**
- * Abre el formulario. Si expense es null → crear. Si no → editar.
- * onSave: callback() tras guardar con éxito.
- */
 export async function openExpenseForm(expense, state, onSave) {
   const user = state.user;
   const isEdit = !!expense;
-  const form = emptyForm(user, expense || {});
 
-  let events = [];
-  let budgets = [];
+  if (!canCreate(user) && !isEdit) {
+    showToast('Tu rol no permite crear gastos', 'error');
+    return;
+  }
+
+  const form = emptyForm(user, expense || {});
+  let events = [], budgets = [];
   try {
     [events, budgets] = await Promise.all([getAllEvents(), getAllBudgets()]);
-  } catch (e) { console.warn('No se pudieron cargar eventos/presupuestos', e); }
+  } catch (e) { console.warn(e); }
+
+  const companies = availableCompanies(user);
+  if (isEdit && form.empresa && !companies.includes(form.empresa)) companies.unshift(form.empresa);
+  if (companies.length === 0) companies.push(user.empresa || 'Mi Empresa');
 
   const { close, content, footer } = openModal(isEdit ? 'Editar gasto' : 'Nuevo gasto', {
     footer: `
@@ -57,24 +70,21 @@ export async function openExpenseForm(expense, state, onSave) {
     `
   });
 
-  const empresasOpciones = [...new Set([
-    user.empresa,
-    ...(user.empresasVisibles || []),
-    ...(budgets.map(b => b.empresa))
-  ].filter(Boolean))];
-
   content.innerHTML = `
     <div class="mb-16">
       <button class="btn btn-secondary btn-block" data-act="scan" type="button">
-        📷 Escanear ticket (foto o PDF)
+        📷 Añadir ticket (foto o PDF)
       </button>
+      <small class="text-muted" style="display:block;margin-top:4px">
+        Hasta ${MAX_FOTOS} imágenes por gasto (anverso/reverso, facturas multipágina, etc.)
+      </small>
     </div>
 
-    <div id="ticket-preview-wrap" class="${form.ticketUrl ? '' : 'hidden'}">
-      <img id="ticket-preview" class="ticket-preview-full" src="${escapeHtml(form.ticketUrl)}" alt="Ticket">
-    </div>
-    <input type="file" id="file-input" accept="image/*,application/pdf" class="hidden">
+    <div id="tickets-gallery" class="tickets-gallery"></div>
+    <input type="file" id="file-input" accept="image/*,application/pdf" multiple class="hidden">
 
+    <div id="closed-alert"></div>
+    <div id="dup-alert"></div>
     <div id="budget-alert"></div>
 
     <div class="field-row">
@@ -161,9 +171,9 @@ export async function openExpenseForm(expense, state, onSave) {
         </select>
       </div>
       <div class="field">
-        <label>Empresa</label>
+        <label>Empresa * <small class="text-muted">(a quién rindes)</small></label>
         <select class="select" name="empresa">
-          ${empresasOpciones.map(e => `<option value="${escapeHtml(e)}" ${e === form.empresa ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+          ${companies.map(e => `<option value="${escapeHtml(e)}" ${e === form.empresa ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -182,26 +192,51 @@ export async function openExpenseForm(expense, state, onSave) {
     </div>
   `;
 
-  const getField = (name) => content.querySelector(`[name="${name}"]`);
+  const $f = (name) => content.querySelector(`[name="${name}"]`);
+  const gallery = content.querySelector('#tickets-gallery');
 
-  // Auto-cálculo de IVA/IRPF/Total cuando cambia base o tipos
+  function renderGallery() {
+    if (form.ticketUrls.length === 0) { gallery.innerHTML = ''; return; }
+    gallery.innerHTML = form.ticketUrls.map((t, i) => `
+      <div class="ticket-thumb-wrap" data-idx="${i}">
+        <img src="${escapeHtml(t.url)}" alt="ticket ${i+1}" class="ticket-thumb-big">
+        <button class="ticket-remove" data-remove="${i}" title="Quitar">×</button>
+        <div class="ticket-idx">${i+1}/${form.ticketUrls.length}</div>
+      </div>
+    `).join('');
+    gallery.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.remove, 10);
+        form.ticketUrls.splice(idx, 1);
+        renderGallery();
+      });
+    });
+    gallery.querySelectorAll('.ticket-thumb-big').forEach((img, i) => {
+      img.addEventListener('click', () => {
+        const { content: pvContent } = openModal(`Ticket ${i+1} de ${form.ticketUrls.length}`);
+        pvContent.innerHTML = `<img src="${escapeHtml(form.ticketUrls[i].url)}" style="width:100%;border-radius:8px">`;
+      });
+    });
+  }
+  renderGallery();
+
   const autoCalc = () => {
-    const base = parseFloat(getField('baseImponible').value) || 0;
-    const tIva = parseFloat(getField('tipoIva').value) || 0;
-    const tIrpf = parseFloat(getField('tipoIrpf').value) || 0;
+    const base = parseFloat($f('baseImponible').value) || 0;
+    const tIva = parseFloat($f('tipoIva').value) || 0;
+    const tIrpf = parseFloat($f('tipoIrpf').value) || 0;
     const ivaT = Math.round(base * tIva) / 100;
     const irpfT = Math.round(base * tIrpf) / 100;
-    getField('ivaTotal').value = ivaT.toFixed(2);
-    getField('irpfTotal').value = irpfT.toFixed(2);
-    getField('total').value = (base + ivaT - irpfT).toFixed(2);
+    $f('ivaTotal').value = ivaT.toFixed(2);
+    $f('irpfTotal').value = irpfT.toFixed(2);
+    $f('total').value = (base + ivaT - irpfT).toFixed(2);
   };
   ['baseImponible', 'tipoIva', 'tipoIrpf'].forEach(n => {
-    getField(n).addEventListener('input', autoCalc);
-    getField(n).addEventListener('change', autoCalc);
+    $f(n).addEventListener('input', autoCalc);
+    $f(n).addEventListener('change', autoCalc);
   });
 
-  // Validación NIF en vivo
-  const nifField = getField('nifProveedor');
+  const nifField = $f('nifProveedor');
   const nifFb = content.querySelector('#nif-feedback');
   nifField.addEventListener('input', () => {
     const v = nifField.value.trim();
@@ -215,68 +250,97 @@ export async function openExpenseForm(expense, state, onSave) {
     }
   });
 
-  // Escanear
+  // Duplicados
+  let duplicateWarning = null;
+  async function checkDuplicate() {
+    const box = content.querySelector('#dup-alert');
+    duplicateWarning = null;
+    const nif = $f('nifProveedor').value.trim().toUpperCase();
+    const total = parseFloat($f('total').value) || 0;
+    const fecha = $f('fecha').value;
+    if (!nif || !total || !fecha) { box.innerHTML = ''; return; }
+    const dup = await findDuplicate({ nifProveedor: nif, total, fecha, excludeId: expense?.id || null });
+    if (dup) {
+      duplicateWarning = dup;
+      box.innerHTML = `
+        <div class="alert alert-warning">
+          <strong>⚠ Posible duplicado</strong><br>
+          Ya existe un gasto con mismo NIF, fecha y total:
+          <em>${escapeHtml(dup.proveedor || '(sin proveedor)')}</em> — ${fmtEur(dup.total)} — ${fmtDate(dup.fecha)}.
+        </div>`;
+    } else { box.innerHTML = ''; }
+  }
+  ['nifProveedor', 'total', 'fecha'].forEach(n => $f(n).addEventListener('change', checkDuplicate));
+  setTimeout(checkDuplicate, 300);
+
+  // Cierre mensual
+  let monthClosed = false;
+  async function checkClosedMonth() {
+    const box = content.querySelector('#closed-alert');
+    const fecha = $f('fecha').value;
+    const empresa = $f('empresa').value;
+    if (!fecha || !empresa) { box.innerHTML = ''; monthClosed = false; return; }
+    monthClosed = !!(await isMonthClosed(empresa, monthKey(fecha)));
+    if (monthClosed && user.role !== 'admin') {
+      box.innerHTML = `<div class="alert alert-danger">🔒 <strong>Mes cerrado.</strong> No se pueden añadir ni modificar gastos de ${monthKey(fecha)} en ${escapeHtml(empresa)}.</div>`;
+    } else if (monthClosed) {
+      box.innerHTML = `<div class="alert alert-warning">🔒 <strong>Mes cerrado.</strong> Solo el admin puede modificar gastos de este período.</div>`;
+    } else { box.innerHTML = ''; }
+  }
+  $f('fecha').addEventListener('change', checkClosedMonth);
+  $f('empresa').addEventListener('change', checkClosedMonth);
+  checkClosedMonth();
+
+  // File input multi
   const fileInput = content.querySelector('#file-input');
   content.querySelector('[data-act="scan"]').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Subir imagen primero en paralelo con OCR
-    handleTicketFile(file);
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    fileInput.value = '';
+    for (const file of files) {
+      if (form.ticketUrls.length >= MAX_FOTOS) {
+        showToast(`Máximo ${MAX_FOTOS} imágenes`, 'warning');
+        break;
+      }
+      await handleTicketFile(file, form.ticketUrls.length === 0);
+    }
   });
 
-  async function handleTicketFile(file) {
-    // Preview inmediato
-    if (file.type.startsWith('image/')) {
-      const url = URL.createObjectURL(file);
-      content.querySelector('#ticket-preview').src = url;
-      content.querySelector('#ticket-preview-wrap').classList.remove('hidden');
-    }
-
-    // Lanzar OCR
-    const extracted = await openScanDialog(file);
-    if (!extracted) return;
-
-    // Precargar campos
-    if (extracted.proveedor)      getField('proveedor').value = extracted.proveedor;
-    if (extracted.nifProveedor)   getField('nifProveedor').value = extracted.nifProveedor;
-    if (extracted.fecha)          getField('fecha').value = extracted.fecha;
-    if (extracted.numeroDocumento) getField('numeroDocumento').value = extracted.numeroDocumento;
-    if (extracted.baseImponible)  getField('baseImponible').value = extracted.baseImponible;
-    if (extracted.tipoIva != null) getField('tipoIva').value = extracted.tipoIva;
-    if (extracted.ivaTotal)       getField('ivaTotal').value = extracted.ivaTotal;
-    if (extracted.total)          getField('total').value = extracted.total;
-
-    // Subir imagen a Cloudinary en background
+  async function handleTicketFile(file, runOcr) {
     try {
       showToast('Subiendo imagen…', 'info', 1500);
-      const compressed = await compressImage(file);
+      const compressed = file.type.startsWith('image/') ? await compressImage(file) : file;
       const upload = await uploadTicketImage(compressed);
-      form.ticketUrl = upload.secure_url;
-      form.ticketPublicId = upload.public_id;
-      content.querySelector('#ticket-preview').src = upload.secure_url;
+      form.ticketUrls.push({ url: upload.secure_url, publicId: upload.public_id });
+      renderGallery();
     } catch (err) {
-      console.error('Upload error:', err);
-      showToast('Error al subir imagen: ' + err.message, 'error', 4000);
+      console.error(err);
+      showToast('Error al subir: ' + err.message, 'error', 4000);
+      return;
     }
-
-    checkBudget();
+    if (!runOcr) return;
+    const extracted = await openScanDialog(file);
+    if (!extracted) return;
+    if (extracted.proveedor && !$f('proveedor').value)         $f('proveedor').value = extracted.proveedor;
+    if (extracted.nifProveedor && !$f('nifProveedor').value)   $f('nifProveedor').value = extracted.nifProveedor;
+    if (extracted.fecha)                                       $f('fecha').value = extracted.fecha;
+    if (extracted.numeroDocumento && !$f('numeroDocumento').value) $f('numeroDocumento').value = extracted.numeroDocumento;
+    if (extracted.baseImponible)  $f('baseImponible').value = extracted.baseImponible;
+    if (extracted.tipoIva != null) $f('tipoIva').value = extracted.tipoIva;
+    if (extracted.ivaTotal)       $f('ivaTotal').value = extracted.ivaTotal;
+    if (extracted.total)          $f('total').value = extracted.total;
+    checkBudget(); checkDuplicate();
     nifField.dispatchEvent(new Event('input'));
   }
 
-  // Chequeo de presupuesto al cambiar total o empresa
   async function checkBudget() {
     const alertBox = content.querySelector('#budget-alert');
-    const empresa = getField('empresa').value;
-    const total = parseFloat(getField('total').value) || 0;
-    const fecha = getField('fecha').value;
+    const empresa = $f('empresa').value;
+    const total = parseFloat($f('total').value) || 0;
+    const fecha = $f('fecha').value;
     const budget = budgets.find(b => b.empresa === empresa);
-    if (!budget || !empresa || !total || !fecha) {
-      alertBox.innerHTML = '';
-      return;
-    }
-    // Cargar gastos del mes desde caché (Firestore se consulta via subscribeExpenses en la vista)
-    const state = window.GastosPro?.getState?.();
+    if (!budget || !empresa || !total || !fecha) { alertBox.innerHTML = ''; return; }
     const all = window.__lastExpenses || [];
     const mk = monthKey(fecha);
     const gastadoMes = all
@@ -284,69 +348,61 @@ export async function openExpenseForm(expense, state, onSave) {
       .reduce((s, e) => s + Number(e.total || 0), 0);
     const nuevoTotal = gastadoMes + total;
     const pct = (nuevoTotal / budget.monto) * 100;
-
     if (pct >= 100) {
-      alertBox.innerHTML = `
-        <div class="alert alert-danger">
-          <strong>⚠ Presupuesto superado</strong><br>
-          ${fmtEur(nuevoTotal)} de ${fmtEur(budget.monto)} (${pct.toFixed(0)}%). Este gasto quedará <strong>pendiente</strong> de aprobación.
-        </div>`;
+      alertBox.innerHTML = `<div class="alert alert-danger"><strong>⚠ Presupuesto superado</strong><br>${fmtEur(nuevoTotal)} de ${fmtEur(budget.monto)} (${pct.toFixed(0)}%). Quedará <strong>pendiente</strong>.</div>`;
     } else if (pct >= 80) {
-      alertBox.innerHTML = `
-        <div class="alert alert-warning">
-          <strong>Atención:</strong> ${fmtEur(nuevoTotal)} de ${fmtEur(budget.monto)} (${pct.toFixed(0)}% del presupuesto mensual).
-        </div>`;
-    } else {
-      alertBox.innerHTML = '';
-    }
+      alertBox.innerHTML = `<div class="alert alert-warning"><strong>Atención:</strong> ${fmtEur(nuevoTotal)} de ${fmtEur(budget.monto)} (${pct.toFixed(0)}% del presupuesto).</div>`;
+    } else { alertBox.innerHTML = ''; }
   }
-  getField('total').addEventListener('input', checkBudget);
-  getField('empresa').addEventListener('change', checkBudget);
-  getField('fecha').addEventListener('change', checkBudget);
+  $f('total').addEventListener('input', checkBudget);
+  $f('empresa').addEventListener('change', checkBudget);
+  $f('fecha').addEventListener('change', checkBudget);
   checkBudget();
 
-  // Guardar
   footer.querySelector('[data-act="cancel"]').addEventListener('click', close);
   footer.querySelector('[data-act="save"]').addEventListener('click', async () => {
     const data = {};
     ['fecha','proveedor','nifProveedor','concepto','categoria','formaPago',
-     'numeroDocumento','empresa','eventoId','notas'].forEach(n => data[n] = getField(n).value.trim());
+     'numeroDocumento','empresa','eventoId','notas'].forEach(n => data[n] = $f(n).value.trim());
     ['baseImponible','tipoIva','ivaTotal','tipoIrpf','irpfTotal','total'].forEach(n => {
-      data[n] = parseFloat(getField(n).value) || 0;
+      data[n] = parseFloat($f(n).value) || 0;
     });
+    data.nifProveedor = data.nifProveedor.toUpperCase();
 
-    if (!data.fecha || !data.proveedor || !data.total) {
-      showToast('Fecha, proveedor y total son obligatorios', 'error');
+    if (!data.fecha || !data.proveedor || !data.total || !data.empresa) {
+      showToast('Fecha, proveedor, total y empresa son obligatorios', 'error');
       return;
     }
-
-    // Evento nombre
-    if (data.eventoId) {
-      const ev = events.find(e => e.id === data.eventoId);
-      data.eventoNombre = ev?.nombre || '';
-    } else {
-      data.eventoNombre = '';
+    if (monthClosed && user.role !== 'admin') {
+      showToast('No se puede guardar: el mes está cerrado', 'error');
+      return;
+    }
+    if (duplicateWarning) {
+      const ok = await confirmDialog(
+        `Hay un gasto muy parecido (${duplicateWarning.proveedor}, ${fmtEur(duplicateWarning.total)}, ${fmtDate(duplicateWarning.fecha)}). ¿Guardar igualmente?`,
+        { confirmText: 'Guardar', cancelText: 'Revisar' }
+      );
+      if (!ok) return;
     }
 
-    // Ticket
-    data.ticketUrl = form.ticketUrl;
-    data.ticketPublicId = form.ticketPublicId;
+    if (data.eventoId) data.eventoNombre = events.find(e => e.id === data.eventoId)?.nombre || '';
+    else data.eventoNombre = '';
 
-    // Estado — si supera presupuesto, forzar pendiente
-    data.estado = form.estado || 'pendiente';
+    data.ticketUrls = form.ticketUrls;
+    data.ticketUrl = form.ticketUrls[0]?.url || '';
+    data.ticketPublicId = form.ticketUrls[0]?.publicId || '';
+    data.estado = expense?.estado || 'pendiente';
+
     const budget = budgets.find(b => b.empresa === data.empresa);
     if (budget) {
       const mk = monthKey(data.fecha);
       const all = window.__lastExpenses || [];
       const gastado = all.filter(e => e.empresa === data.empresa && monthKey(e.fecha) === mk && e.id !== expense?.id)
                           .reduce((s, e) => s + Number(e.total || 0), 0);
-      if (gastado + data.total > budget.monto) {
-        data.estado = 'pendiente';
-        data.superaPresupuesto = true;
-      }
+      data.superaPresupuesto = (gastado + data.total > budget.monto);
+      if (data.superaPresupuesto && !isEdit) data.estado = 'pendiente';
     }
 
-    // Metadata usuario
     if (!isEdit) {
       data.createdByUid = user.uid;
       data.createdByEmail = user.email;
@@ -358,16 +414,13 @@ export async function openExpenseForm(expense, state, onSave) {
     saveBtn.textContent = 'Guardando…';
 
     try {
-      if (isEdit) {
-        await updateExpense(expense.id, data);
-      } else {
-        await createExpense(data);
-      }
+      if (isEdit) await updateExpense(expense.id, data);
+      else await createExpense(data);
       close();
       onSave?.();
     } catch (err) {
       console.error(err);
-      showToast('Error al guardar: ' + err.message, 'error', 5000);
+      showToast('Error: ' + err.message, 'error', 5000);
       saveBtn.disabled = false;
       saveBtn.textContent = isEdit ? 'Guardar cambios' : 'Guardar gasto';
     }
