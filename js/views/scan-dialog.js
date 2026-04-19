@@ -43,14 +43,36 @@ export async function openScanDialog(file) {
       renderReview(extracted);
     }).catch((err) => {
       if (cancelled) return;
-      console.error(err);
+      console.error('Error OCR:', err);
+      const fullMsg = String(err?.message || err || 'Error desconocido');
+      const stack = String(err?.stack || '').split('\n').slice(0, 3).join('\n');
       content.innerHTML = `
-        <div class="alert alert-danger">
-          <strong>Error en el OCR</strong><br>${escapeHtml(err.message)}
+        <div class="alert alert-danger" style="margin-bottom:12px">
+          <strong>⚠ Error en el OCR</strong>
         </div>
-        <p class="text-muted" style="font-size:13px">Puedes continuar rellenando el formulario manualmente.</p>
+        <div class="field">
+          <label>Mensaje de error completo</label>
+          <textarea readonly rows="4" style="font-family:monospace;font-size:11px;width:100%">${escapeHtml(fullMsg + (stack ? '\n\n' + stack : ''))}</textarea>
+        </div>
+        <p class="text-muted" style="font-size:13px">
+          Puedes continuar rellenando el formulario manualmente o reintentar el escaneo.
+        </p>
+        <p class="text-muted" style="font-size:12px">
+          <strong>Diagnóstico rápido:</strong><br>
+          · Si dice "HTTP 401" o "API key" → la clave Gemini está mal en Ajustes<br>
+          · Si dice "HTTP 429" → has superado el límite gratis de Gemini (espera unos minutos)<br>
+          · Si dice "HTTP 400" o "inline_data" → el archivo es demasiado grande o el formato no es válido<br>
+          · Si dice "Failed to fetch" → problema de red / CORS
+        </p>
       `;
-      footer.innerHTML = `<button class="btn btn-primary" data-act="ok">Continuar</button>`;
+      footer.innerHTML = `
+        <button class="btn btn-secondary" data-act="copy">📋 Copiar error</button>
+        <button class="btn btn-primary" data-act="ok">Continuar sin OCR</button>
+      `;
+      footer.querySelector('[data-act="copy"]').addEventListener('click', () => {
+        navigator.clipboard.writeText(fullMsg + '\n\n' + stack);
+        showToast('Error copiado', 'success');
+      });
       footer.querySelector('[data-act="ok"]').addEventListener('click', () => {
         close();
         resolve({});
