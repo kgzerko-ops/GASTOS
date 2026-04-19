@@ -243,6 +243,105 @@ export async function deleteRecurring(id) {
   await deleteDoc(doc(db, 'recurring', id));
 }
 
+// ── Invitaciones por código ─────────────────────
+function generateInviteCode() {
+  // 6 caracteres alfanuméricos sin ambiguos (0/O, I/1)
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+/**
+ * Crea un código de invitación. El documento id ES el código.
+ * @param {Object} payload - { email, displayName, role, empresa, empresasVisibles, puedeVerTodos }
+ * @param {Object} creator - { uid, email }
+ * @returns {Object} - { code, expiresAt }
+ */
+export async function createInvite(payload, creator) {
+  // Intenta hasta 5 veces generar un código único
+  for (let i = 0; i < 5; i++) {
+    const code = generateInviteCode();
+    const ref = doc(db, 'invites', code);
+    const existing = await getDoc(ref);
+    if (existing.exists()) continue;
+
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 días
+    await setDoc(ref, {
+      email: (payload.email || '').toLowerCase().trim(),
+      displayName: payload.displayName || '',
+      role: payload.role || 'user',
+      empresa: payload.empresa || '',
+      empresasVisibles: payload.empresasVisibles || [],
+      puedeVerTodos: !!payload.puedeVerTodos,
+      used: false,
+      usedBy: null,
+      usedAt: null,
+      createdBy: creator.email,
+      createdByUid: creator.uid,
+      createdAt: serverTimestamp(),
+      expiresAt
+    });
+    return { code, expiresAt };
+  }
+  throw new Error('No se pudo generar un código único');
+}
+
+export async function getAllInvites() {
+  const snap = await getDocs(collection(db, 'invites'));
+  return snap.docs.map(d => ({ code: d.id, ...d.data() }));
+}
+
+export async function getInvite(code) {
+  if (!code) return null;
+  const snap = await getDoc(doc(db, 'invites', code.toUpperCase()));
+  if (!snap.exists()) return null;
+  return { code: snap.id, ...snap.data() };
+}
+
+/**
+ * Valida una invitación. Lanza error si es inválida.
+ */
+export async function validateInvite(code, email) {
+  const inv = await getInvite(code);
+  if (!inv) throw new Error('Código de invitación no válido');
+  if (inv.used) throw new Error('Este código ya fue utilizado');
+  if (inv.expiresAt && Date.now() > inv.expiresAt) throw new Error('Este código ha caducado');
+  if (email && inv.email && inv.email.toLowerCase() !== email.toLowerCase()) {
+    throw new Error(`Este código es para ${inv.email}, no para ${email}`);
+  }
+  return inv;
+}
+
+/**
+ * Marca un código como consumido. Lo llama auth.js tras crear el perfil.
+ */
+export async function consumeInvite(code, uid, email) {
+  await updateDoc(doc(db, 'invites', code.toUpperCase()), {
+    used: true,
+    usedBy: email,
+    usedByUid: uid,
+    usedAt: serverTimestamp()
+  });
+}
+
+export async function deleteInvite(code) {
+  await deleteDoc(doc(db, 'invites', code.toUpperCase()));
+}
+
+// ── Borrado de usuario (admin) ──────────────────
+/**
+ * Borra el perfil del usuario en Firestore. NO borra la cuenta de Auth
+ * (solo Firebase Admin SDK puede, y necesita backend).
+ * El usuario quedará autenticado pero sin perfil → verá pantalla de acceso denegado.
+ * Para limpieza total: el usuario debe borrar su propia cuenta desde la app (opción futura).
+ */
+export async function deleteUserProfile(uid) {
+  await deleteDoc(doc(db, 'users', uid));
+}
+
 /**
  * Materializa recurrentes: crea un gasto mensual si aún no existe.
  * Se llama una vez al día al arrancar la app (solo admin).

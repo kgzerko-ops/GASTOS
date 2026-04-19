@@ -87,6 +87,19 @@ service cloud.firestore {
       allow read:  if isActive();
       allow write: if isAdmin();
     }
+
+    match /invites/{code} {
+      // Cualquiera autenticado puede LEER una invitación (necesario para validarla
+      // al crear perfil tras registrarse). Solo admin crea/borra. El propio
+      // usuario recién creado marca la invitación como "used".
+      allow read:   if isSignedIn();
+      allow create: if isAdmin();
+      allow delete: if isAdmin();
+      allow update: if isSignedIn()
+                    && resource.data.email == request.auth.token.email
+                    && !resource.data.used
+                    && request.resource.data.used == true;
+    }
   }
 }
 ```
@@ -152,7 +165,20 @@ Desde **Ajustes** dentro de la app, elige el motor y añade la API key si proced
 | **Usuario** | su empresa | sus gastos | no | no |
 | **Visor** | no | empresas visibles | no | no |
 
-Cada nuevo usuario queda **pendiente** hasta que un admin lo active desde la pestaña "Usuarios".
+## 🎟 Sistema de invitaciones
+
+El registro abierto está desactivado. Los usuarios nuevos solo entran de dos maneras:
+
+**1. Login con Google directo** (para quien ya sabe que está autorizado)
+Si se loguean con Google sin código de invitación, crean un perfil automático pero **inactivo**. El admin debe activarlos manualmente desde la pestaña Usuarios, o simplemente eliminarlos si son desconocidos.
+
+**2. Invitación por código (recomendado)**
+- El admin va a **Usuarios → + Invitar por código** y rellena: email, rol, empresa, etc.
+- Se genera un código de 6 caracteres y un link `https://tu-app/?invite=A3K9M2`
+- El admin comparte el link por WhatsApp/email con el invitado
+- El invitado abre el link, elige entre Google o crear contraseña, y queda activado automáticamente con el rol y empresa preconfigurados
+- Cada código **caduca a los 7 días** y solo puede usarse **una vez**
+- Los códigos activos se listan en la parte superior de la pestaña Usuarios, donde pueden revocarse en cualquier momento
 
 ---
 
