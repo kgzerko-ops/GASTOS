@@ -26,20 +26,20 @@ export const firebaseConfig = {
   projectId: "gastos-ticket",
   storageBucket: "gastos-ticket.firebasestorage.app",
   messagingSenderId: "304506437977",
-  appId: "1:304506437977:web:845e58788a9a12aa730c48"
+  appId: "1:304506437977:web:845e58788a9a12aa730c48",
+  measurementId: "G-ZBW5CC3ZMK"
 };
 
 export const cloudinaryConfig = {
-  cloudName: "dd7b5unem",
+  cloudName:    "dd7b5unem",
   uploadPreset: "u7s9ytmy"
 };
 
-export const bootstrapAdminEmail = "kgzerko@gmail.com";
-export const defaultCompanyName = "SMART CONGRESS";
-
+// OCR — claves opcionales. Si no las pones, se usa Tesseract local.
+// El usuario también puede configurarlas desde la pestaña "Ajustes".
 export const defaultOcrKeys = {
-  gemini: "",
-  ocrSpace: ""
+  ocrSpace: "",   // https://ocr.space/ocrapi  (usa "helloworld" para probar, tiene límite muy bajo)
+  gemini:   ""    // https://aistudio.google.com/apikey
 };
 
 // Primer email que al registrarse recibe rol "admin" automáticamente.
