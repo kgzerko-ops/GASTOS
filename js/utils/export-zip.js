@@ -125,16 +125,26 @@ function buildXlsxBlob(XLSX, expenses) {
     'NIF Proveedor': e.nifProveedor || '',
     'Concepto': e.concepto || '',
     'Categoría': e.categoria || '',
+    'Etiquetas': (e.tags || []).join(', '),
     'Empresa': e.empresa || '',
     'Evento': e.eventoNombre || '',
+    'Clave AEAT': e.claveOperacion || '01',
     'Base imponible': Number(e.baseImponible || 0),
     'Tipo IVA (%)': Number(e.tipoIva ?? 0),
     'IVA total': Number(e.ivaTotal || 0),
+    'Recargo equiv.': Number(e.recargoEquivalencia || 0),
     'IRPF (%)': Number(e.tipoIrpf ?? 0),
     'IRPF total': Number(e.irpfTotal || 0),
+    'Propina': Number(e.propina || 0),
     'Total': Number(e.total || 0),
     'Forma de pago': e.formaPago || '',
     'Nº documento': e.numeroDocumento || '',
+    'Rect. de': e.numeroFacturaRectificativa || '',
+    'Tipo': e.esAbono ? 'ABONO' : (e.esIntracomunitario ? 'INTRA-UE' : (e.isKilometraje ? 'KILOMETRAJE' : 'NORMAL')),
+    'Matrícula': e.matricula || '',
+    'Hotel entrada': e.fechaEntrada || '',
+    'Hotel salida': e.fechaSalida || '',
+    'Noches': Number(e.noches || 0),
     'Estado': e.estado || '',
     'Nota admin': e.notaAdmin || '',
     'Cargado por': e.createdByEmail || '',
@@ -143,17 +153,24 @@ function buildXlsxBlob(XLSX, expenses) {
   }));
   const tot = rows.reduce((acc, r) => {
     acc.base += r['Base imponible']; acc.iva += r['IVA total'];
-    acc.irpf += r['IRPF total']; acc.total += r['Total'];
+    acc.recargo += r['Recargo equiv.'];
+    acc.irpf += r['IRPF total']; acc.propina += r['Propina'];
+    acc.total += r['Total'];
     return acc;
-  }, { base: 0, iva: 0, irpf: 0, total: 0 });
+  }, { base: 0, iva: 0, recargo: 0, irpf: 0, propina: 0, total: 0 });
   rows.push({});
-  rows.push({ 'Fecha': 'TOTALES', 'Base imponible': tot.base, 'IVA total': tot.iva, 'IRPF total': tot.irpf, 'Total': tot.total });
+  rows.push({
+    'Fecha': 'TOTALES',
+    'Base imponible': tot.base, 'IVA total': tot.iva, 'Recargo equiv.': tot.recargo,
+    'IRPF total': tot.irpf, 'Propina': tot.propina, 'Total': tot.total
+  });
 
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = Array(20).fill({ wch: 16 });
+  ws['!cols'] = Array(30).fill({ wch: 14 });
   const range = XLSX.utils.decode_range(ws['!ref']);
+  // Columnas con importes €: Base (8), IVA (10), Recargo (11), IRPF (13), Propina (14), Total (15)
   for (let R = 1; R <= range.e.r; R++) {
-    for (const col of [7, 9, 11, 12]) {
+    for (const col of [8, 10, 11, 13, 14]) {
       const cell = ws[XLSX.utils.encode_cell({ r: R, c: col })];
       if (cell && typeof cell.v === 'number') cell.z = '#,##0.00 €';
     }

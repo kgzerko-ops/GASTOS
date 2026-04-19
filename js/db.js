@@ -104,7 +104,8 @@ export function subscribeExpenses(user, callback) {
 }
 
 /**
- * Busca un posible duplicado: mismo NIF + mismo total + misma fecha.
+ * Busca un posible duplicado: mismo NIF + misma fecha + total similar (±0,10 €).
+ * Retorna { ...data, _duplicateType } donde _duplicateType es 'exacto' o 'parecido'.
  */
 export async function findDuplicate({ nifProveedor, total, fecha, excludeId = null }) {
   if (!nifProveedor || !total || !fecha) return null;
@@ -119,8 +120,12 @@ export async function findDuplicate({ nifProveedor, total, fecha, excludeId = nu
     for (const d of snap.docs) {
       if (d.id === excludeId) continue;
       const data = d.data();
-      if (Math.abs(Number(data.total) - Number(total)) < 0.02) {
-        return { id: d.id, ...data };
+      const diff = Math.abs(Number(data.total) - Number(total));
+      if (diff < 0.02) {
+        return { id: d.id, _duplicateType: 'exacto', ...data };
+      }
+      if (diff < 0.10) {
+        return { id: d.id, _duplicateType: 'parecido', ...data };
       }
     }
   } catch (err) {

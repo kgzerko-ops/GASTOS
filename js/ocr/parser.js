@@ -1,23 +1,86 @@
 // ═══════════════════════════════════════════════════════════════
-// PARSER OCR → Campos fiscales españoles
-// Extrae NIF, fecha, base imponible, IVA, total, proveedor, etc.
+// PARSER OCR → Campos fiscales españoles (v2 con saneadores)
 // ═══════════════════════════════════════════════════════════════
+
+import { parseAnyDate, normalizeNif, snapTipoIva } from '../utils/sanitize.js';
 
 export function parseTicketText(rawText) {
   const text = rawText.replace(/\r/g, '');
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
+  // Detectar posibles múltiples tipos de IVA
+  const lineasIva = extractLineasIva(text);
+
+  let tipoIva, baseImponible, ivaTotal;
+  if (lineasIva.length > 0) {
+    const dominante = lineasIva.reduce((a, b) => a.baseImponible > b.baseImponible ? a : b);
+    tipoIva = dominante.tipoIva;
+    baseImponible = dominante.baseImponible;
+    ivaTotal = dominante.ivaTotal;
+  } else {
+    tipoIva = extractTipoIva(text);
+    baseImponible = extractNumero(text, ['base imponible', 'base\\s*imp', 'subtotal', 'base']);
+    ivaTotal = extractNumero(text, ['iva\\s*\\(?\\s*21', 'iva\\s*\\(?\\s*10', 'iva\\s*\\(?\\s*4', 'iva total', 'i\\.?v\\.?a\\.?', 'iva']);
+  }
+
   return {
     proveedor:      extractProveedor(lines),
-    nifProveedor:   extractNif(text),
-    fecha:          extractFecha(text),
+    nifProveedor:   normalizeNif(extractNif(text)),
+    fecha:          parseAnyDate(extractFecha(text)),
     numeroDocumento: extractNumDoc(text),
-    baseImponible:  extractNumero(text, ['base imponible', 'base\\s*imp', 'subtotal', 'base']),
-    ivaTotal:       extractNumero(text, ['iva\\s*\\(?\\s*21', 'iva\\s*\\(?\\s*10', 'iva\\s*\\(?\\s*4', 'iva total', 'i\\.?v\\.?a\\.?', 'iva']),
-    tipoIva:        extractTipoIva(text),
+    lineasIva:      lineasIva.length > 0 ? lineasIva : (baseImponible > 0 ? [{ tipoIva, baseImponible, ivaTotal }] : []),
+    tipoIva,
+    baseImponible,
+    ivaTotal,
+    tipoIrpf:       0,
+    irpfTotal:      extractNumero(text, ['irpf', 'retenc']),
     total:          extractNumero(text, ['total\\s*a?\\s*pagar', 'total\\s*factura', 'importe\\s*total', 'total']),
+    formaPago:      extractFormaPago(text),
+    esIntracomunitario: false,
+    confianza:      'media',
     rawText:        text
   };
+}
+
+// ── Múltiples líneas de IVA (Alcampo, Mercadona, etc.) ─
+// Ejemplos de formato típico:
+//   Imp   %      Base    Cuota
+//   A IVA 21,00  77,40   16,27
+//   C IVA  4,00  14,55    0,60
+function extractLineasIva(text) {
+  const lineas = [];
+  const visto = new Set();
+
+  // Patrón principal: "21,00  77,40  16,27" en una línea
+  const re1 = /(?:iva|tipo)?\s*([ABC]?)\s*iva?\s*(\d{1,2})[,\.]?\d*\s*%?\s*[\s|]+([\d.,]+)\s+([\d.,]+)/gi;
+  let m;
+  while ((m = re1.exec(text)) !== null) {
+    const tipo = snapTipoIva(m[2]);
+    const base = parseNumeroES(m[3]);
+    const cuota = parseNumeroES(m[4]);
+    if (base > 0 && cuota >= 0 && !visto.has(tipo)) {
+      lineas.push({ tipoIva: tipo, baseImponible: base, ivaTotal: cuota });
+      visto.add(tipo);
+    }
+  }
+
+  // Patrón alternativo simple: "21% 100,00 21,00"
+  if (lineas.length === 0) {
+    const re2 = /(\d{1,2})\s*%\s+([\d.,]+)\s+([\d.,]+)/g;
+    while ((m = re2.exec(text)) !== null) {
+      const tipo = snapTipoIva(m[1]);
+      const base = parseNumeroES(m[2]);
+      const cuota = parseNumeroES(m[3]);
+      // Validar: cuota debe ser aprox base * tipo / 100 (±0,10)
+      const esperada = base * tipo / 100;
+      if (Math.abs(cuota - esperada) < 0.15 && base > 0 && !visto.has(tipo)) {
+        lineas.push({ tipoIva: tipo, baseImponible: base, ivaTotal: cuota });
+        visto.add(tipo);
+      }
+    }
+  }
+
+  return lineas;
 }
 
 // ── Proveedor: primera línea significativa ─────
@@ -79,6 +142,17 @@ function extractTipoIva(text) {
   if (/\b10\s*%/.test(text)) return 10;
   if (/\b4\s*%/.test(text)) return 4;
   return 21; // default
+}
+
+// ── Forma de pago ──────────────────────────────
+function extractFormaPago(text) {
+  const t = text.toLowerCase();
+  if (/visa|mastercard|tarjeta|contactless|caixabank|redsys/i.test(t)) return 'Tarjeta';
+  if (/efectivo|cash|metalico/i.test(t)) return 'Efectivo';
+  if (/bizum/i.test(t)) return 'Bizum';
+  if (/transferencia|wire/i.test(t)) return 'Transferencia';
+  if (/domiciliac/i.test(t)) return 'Domiciliación';
+  return 'Tarjeta';
 }
 
 // ── Extractor genérico de número junto a etiqueta ──

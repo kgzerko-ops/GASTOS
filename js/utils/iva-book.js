@@ -27,34 +27,64 @@ export async function exportLibroIva(expenses, { empresa, year, trimestre }) {
   });
   data.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
 
-  const facturas = data.map((e, i) => ({
-    'Nº Orden':          i + 1,
-    'Fecha expedición':  e.fecha || '',
-    'Fecha operación':   e.fecha || '',
-    'Nº factura':        e.numeroDocumento || '',
-    'NIF Proveedor':     e.nifProveedor || '',
-    'Nombre Proveedor':  e.proveedor || '',
-    'Concepto':          e.concepto || '',
-    'Base Imponible':    Number(e.baseImponible || 0),
-    'Tipo IVA (%)':      Number(e.tipoIva || 0),
-    'Cuota IVA':         Number(e.ivaTotal || 0),
-    'Tipo IRPF (%)':     Number(e.tipoIrpf || 0),
-    'Retención IRPF':    Number(e.irpfTotal || 0),
-    'Total Factura':     Number(e.total || 0),
-    'Deducible':         'Sí',
-    'Clave Operación':   '01',
-    'Categoría':         e.categoria || ''
-  }));
+  // ── Desglosar por líneas de IVA ────────────────
+  // Cada gasto con varios tipos de IVA genera varias filas (una por tipo),
+  // con el mismo nº de orden y factura, para que la gestoría vea el desglose.
+  const facturas = [];
+  let orden = 0;
+  for (const e of data) {
+    orden++;
+    const lineas = Array.isArray(e.lineasIva) && e.lineasIva.length > 0
+      ? e.lineasIva
+      : [{ tipoIva: Number(e.tipoIva || 0), baseImponible: Number(e.baseImponible || 0), ivaTotal: Number(e.ivaTotal || 0) }];
 
-  const totalBase = facturas.reduce((s, r) => s + r['Base Imponible'], 0);
-  const totalIva = facturas.reduce((s, r) => s + r['Cuota IVA'], 0);
-  const totalIrpf = facturas.reduce((s, r) => s + r['Retención IRPF'], 0);
-  const totalFact = facturas.reduce((s, r) => s + r['Total Factura'], 0);
+    // Proporcionar el IRPF proporcionalmente a la primera línea (simplificación aceptada por gestorías)
+    const totalBaseGasto = lineas.reduce((s, l) => s + Number(l.baseImponible || 0), 0);
+
+    lineas.forEach((l, idx) => {
+      const primeraLinea = idx === 0;
+      const proporcIrpf = (totalBaseGasto > 0 && primeraLinea)
+        ? Number(e.irpfTotal || 0)
+        : 0;
+      const totalFacturaRow = primeraLinea ? Number(e.total || 0) : 0;  // total solo en la primera línea
+
+      facturas.push({
+        'Nº Orden':          orden + (lineas.length > 1 ? (primeraLinea ? '' : '.' + (idx+1)) : ''),
+        'Fecha expedición':  primeraLinea ? (e.fecha || '') : '',
+        'Fecha operación':   primeraLinea ? (e.fecha || '') : '',
+        'Nº factura':        primeraLinea ? (e.numeroDocumento || '') : '',
+        'Nº rect. de':       primeraLinea ? (e.numeroFacturaRectificativa || '') : '',
+        'NIF Proveedor':     primeraLinea ? (e.nifProveedor || '') : '',
+        'Nombre Proveedor':  primeraLinea ? (e.proveedor || '') : '',
+        'Concepto':          primeraLinea ? (e.concepto || '') : `(continuación tipo ${Number(l.tipoIva)}%)`,
+        'Base Imponible':    Number(l.baseImponible || 0) * (e.esAbono ? -1 : 1),
+        'Tipo IVA (%)':      Number(l.tipoIva || 0),
+        'Cuota IVA':         Number(l.ivaTotal || 0) * (e.esAbono ? -1 : 1),
+        'Recargo equiv.':    primeraLinea ? Number(e.recargoEquivalencia || 0) * (e.esAbono ? -1 : 1) : 0,
+        'Tipo IRPF (%)':     primeraLinea ? Number(e.tipoIrpf || 0) : 0,
+        'Retención IRPF':    proporcIrpf * (e.esAbono ? -1 : 1),
+        'Total Factura':     totalFacturaRow,  // ya viene con signo si es abono
+        'Deducible':         e.esAbono ? 'ABONO' : 'Sí',
+        'Clave Operación':   e.claveOperacion || (e.esIntracomunitario ? '09' : '01'),
+        'Categoría':         primeraLinea ? (e.categoria || '') : ''
+      });
+    });
+  }
+
+  const totalBase = facturas.reduce((s, r) => s + (r['Base Imponible'] || 0), 0);
+  const totalIva = facturas.reduce((s, r) => s + (r['Cuota IVA'] || 0), 0);
+  const totalRecargo = facturas.reduce((s, r) => s + (r['Recargo equiv.'] || 0), 0);
+  const totalIrpf = facturas.reduce((s, r) => s + (r['Retención IRPF'] || 0), 0);
+  const totalFact = facturas.reduce((s, r) => s + (r['Total Factura'] || 0), 0);
 
   facturas.push({});
   facturas.push({
-    'Nº Orden': 'TOTALES', 'Base Imponible': totalBase,
-    'Cuota IVA': totalIva, 'Retención IRPF': totalIrpf, 'Total Factura': totalFact
+    'Nº Orden': 'TOTALES',
+    'Base Imponible': totalBase,
+    'Cuota IVA': totalIva,
+    'Recargo equiv.': totalRecargo,
+    'Retención IRPF': totalIrpf,
+    'Total Factura': totalFact
   });
 
   const ws1 = XLSX.utils.json_to_sheet(facturas);
@@ -67,19 +97,24 @@ export async function exportLibroIva(expenses, { empresa, year, trimestre }) {
     }
   }
 
-  // Resumen por tipo IVA
+  // Resumen por tipo IVA (desglosado desde lineasIva)
   const porTipo = {};
   data.forEach(e => {
-    const t = Number(e.tipoIva || 0);
-    if (!porTipo[t]) porTipo[t] = { base: 0, cuota: 0, count: 0 };
-    porTipo[t].base += Number(e.baseImponible || 0);
-    porTipo[t].cuota += Number(e.ivaTotal || 0);
-    porTipo[t].count++;
+    const lineas = Array.isArray(e.lineasIva) && e.lineasIva.length > 0
+      ? e.lineasIva
+      : [{ tipoIva: Number(e.tipoIva || 0), baseImponible: Number(e.baseImponible || 0), ivaTotal: Number(e.ivaTotal || 0) }];
+    lineas.forEach(l => {
+      const t = Number(l.tipoIva || 0);
+      if (!porTipo[t]) porTipo[t] = { base: 0, cuota: 0, count: 0 };
+      porTipo[t].base += Number(l.baseImponible || 0);
+      porTipo[t].cuota += Number(l.ivaTotal || 0);
+      porTipo[t].count++;
+    });
   });
   const resumen = Object.entries(porTipo).sort((a, b) => Number(a[0]) - Number(b[0]))
-    .map(([tipo, v]) => ({ 'Tipo IVA': tipo + '%', 'Nº facturas': v.count, 'Base imponible': v.base, 'Cuota IVA': v.cuota }));
+    .map(([tipo, v]) => ({ 'Tipo IVA': tipo + '%', 'Nº líneas': v.count, 'Base imponible': v.base, 'Cuota IVA': v.cuota }));
   resumen.push({});
-  resumen.push({ 'Tipo IVA': 'TOTAL', 'Nº facturas': data.length, 'Base imponible': totalBase, 'Cuota IVA': totalIva });
+  resumen.push({ 'Tipo IVA': 'TOTAL', 'Nº líneas': Object.values(porTipo).reduce((s, v) => s + v.count, 0), 'Base imponible': totalBase, 'Cuota IVA': totalIva });
 
   const ws2 = XLSX.utils.json_to_sheet(resumen);
   ws2['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 14 }];

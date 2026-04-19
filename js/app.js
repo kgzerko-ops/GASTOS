@@ -8,6 +8,10 @@ import { initDb, subscribeExpenses, materializeRecurring } from './db.js';
 import { firebaseConfig } from './firebase-config.js';
 import { showToast, openModal } from './components/modal.js';
 import { canCreate, isAdmin } from './roles.js';
+import { applyTheme, getTheme } from './views/settings.js';
+
+// Aplicar tema antes de cualquier render
+applyTheme(getTheme());
 
 import { renderPanel } from './views/dashboard.js';
 import { renderExpenses, openExpenseForm } from './views/expenses.js';
@@ -45,21 +49,47 @@ initAuth(fbApp);
 initDb(fbApp);
 
 let pendingUnsub = null;
+let resolvedWatcherUnsub = null;
 function startPendingWatcher() {
   if (pendingUnsub) { pendingUnsub(); pendingUnsub = null; }
-  if (!isAdmin(state.user)) return;
-  pendingUnsub = subscribeExpenses(state.user, (docs) => {
-    state.pendingCount = docs.filter(e => e.estado === 'pendiente').length;
-    updatePendingBadge();
-  });
+  if (resolvedWatcherUnsub) { resolvedWatcherUnsub(); resolvedWatcherUnsub = null; }
+
+  if (isAdmin(state.user)) {
+    // Admin: badge con nº de pendientes
+    pendingUnsub = subscribeExpenses(state.user, (docs) => {
+      state.pendingCount = docs.filter(e => e.estado === 'pendiente').length;
+      updatePendingBadge('expenses', state.pendingCount);
+    });
+  } else {
+    // No admin: badge con nº de gastos propios recién resueltos
+    const seenKey = 'gastospro-seen-resolved-' + state.user.uid;
+    const seenTs = parseInt(localStorage.getItem(seenKey) || '0', 10);
+    resolvedWatcherUnsub = subscribeExpenses(state.user, (docs) => {
+      const nuevos = docs.filter(e =>
+        e.createdByUid === state.user.uid &&
+        (e.estado === 'aprobado' || e.estado === 'rechazado') &&
+        e.resueltoEn && e.resueltoEn > seenTs
+      );
+      state.pendingCount = nuevos.length;
+      updatePendingBadge('expenses', nuevos.length);
+    });
+  }
 }
 
-function updatePendingBadge() {
-  const tab = document.querySelector('.tab[data-tab="expenses"]');
+// Marcar como vistos al entrar en la pestaña Gastos
+function markResolvedSeen() {
+  if (!state.user || isAdmin(state.user)) return;
+  localStorage.setItem('gastospro-seen-resolved-' + state.user.uid, String(Date.now()));
+  state.pendingCount = 0;
+  updatePendingBadge('expenses', 0);
+}
+
+function updatePendingBadge(tabName, count) {
+  const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
   if (!tab) return;
   const existing = tab.querySelector('.tab-badge');
-  if (state.pendingCount > 0) {
-    const text = state.pendingCount > 99 ? '99+' : String(state.pendingCount);
+  if (count > 0) {
+    const text = count > 99 ? '99+' : String(count);
     if (existing) existing.textContent = text;
     else {
       const b = document.createElement('span');
@@ -92,8 +122,13 @@ onAuthReady(async (user) => {
   const empresa = user.empresa || '';
   const roleLabels = { admin: 'Admin', colaborador: 'Colaborador', visor: 'Visor', user: '' };
   const roleBadge = roleLabels[user.role] ? ` [${roleLabels[user.role]}]` : '';
-  document.getElementById('user-info').textContent =
-    `${user.displayName || user.email.split('@')[0]}${roleBadge}${empresa ? ' · ' + empresa : ''}`;
+  const userInfoEl = document.getElementById('user-info');
+  userInfoEl.innerHTML = '';
+  const avWrap = document.createElement('span');
+  avWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px';
+  const { avatarHtml } = await import('./utils/avatar.js');
+  avWrap.innerHTML = `${avatarHtml(user.displayName || user.email, 'sm')}<span>${user.displayName || user.email.split('@')[0]}${roleBadge}${empresa ? ' · ' + empresa : ''}</span>`;
+  userInfoEl.appendChild(avWrap);
 
   showView('main');
 
@@ -129,7 +164,7 @@ async function renderActiveTab() {
   try {
     switch (state.activeTab) {
       case 'panel':      await renderPanel(content, state); break;
-      case 'expenses':   await renderExpenses(content, state); break;
+      case 'expenses':   await renderExpenses(content, state); markResolvedSeen(); break;
       case 'users':      await renderUsers(content, state); break;
       case 'reports':    await renderReports(content, state); break;
       case 'budgets':    await renderBudgets(content, state); break;

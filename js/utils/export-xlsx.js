@@ -1,12 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// EXPORT A EXCEL (SheetJS)
+// EXPORT EXCEL v5 — con todos los campos fiscales
 // ═══════════════════════════════════════════════════════════════
 
 let xlsxLoaded = null;
-
 async function ensureXlsx() {
   if (xlsxLoaded) return xlsxLoaded;
-  // Cargar SheetJS desde CDN
   xlsxLoaded = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
@@ -26,16 +24,27 @@ export async function exportExpensesToXlsx(expenses, filename = 'gastos.xlsx') {
     'NIF Proveedor': e.nifProveedor || '',
     'Concepto': e.concepto || '',
     'Categoría': e.categoria || '',
+    'Etiquetas': (e.tags || []).join(', '),
     'Empresa': e.empresa || '',
     'Evento': e.eventoNombre || '',
+    'Clave AEAT': e.claveOperacion || '01',
     'Base imponible': Number(e.baseImponible || 0),
     'Tipo IVA (%)': Number(e.tipoIva ?? 0),
     'IVA total': Number(e.ivaTotal || 0),
+    'Recargo equiv.': Number(e.recargoEquivalencia || 0),
     'IRPF (%)': Number(e.tipoIrpf ?? 0),
     'IRPF total': Number(e.irpfTotal || 0),
+    'Propina': Number(e.propina || 0),
     'Total': Number(e.total || 0),
     'Forma de pago': e.formaPago || '',
     'Nº documento': e.numeroDocumento || '',
+    'Rect. de': e.numeroFacturaRectificativa || '',
+    'Tipo': e.esAbono ? 'ABONO' : (e.esIntracomunitario ? 'INTRA-UE' : (e.isKilometraje ? 'KILOMETRAJE' : 'NORMAL')),
+    'Matrícula': e.matricula || '',
+    'Hotel entrada': e.fechaEntrada || '',
+    'Hotel salida': e.fechaSalida || '',
+    'Noches': Number(e.noches || 0),
+    'Habitación': e.habitacion || '',
     'Estado': e.estado || '',
     'Nota admin': e.notaAdmin || '',
     'Cargado por': e.createdByEmail || '',
@@ -46,34 +55,41 @@ export async function exportExpensesToXlsx(expenses, filename = 'gastos.xlsx') {
   const tot = rows.reduce((acc, r) => {
     acc['Base imponible'] += r['Base imponible'];
     acc['IVA total'] += r['IVA total'];
+    acc['Recargo equiv.'] += r['Recargo equiv.'];
     acc['IRPF total'] += r['IRPF total'];
+    acc['Propina'] += r['Propina'];
     acc['Total'] += r['Total'];
     return acc;
-  }, { 'Base imponible': 0, 'IVA total': 0, 'IRPF total': 0, 'Total': 0 });
+  }, { 'Base imponible': 0, 'IVA total': 0, 'Recargo equiv.': 0, 'IRPF total': 0, 'Propina': 0, 'Total': 0 });
 
   rows.push({});
   rows.push({
     'Fecha': 'TOTALES',
     'Base imponible': tot['Base imponible'],
     'IVA total': tot['IVA total'],
+    'Recargo equiv.': tot['Recargo equiv.'],
     'IRPF total': tot['IRPF total'],
+    'Propina': tot['Propina'],
     'Total': tot['Total']
   });
 
   const ws = XLSX.utils.json_to_sheet(rows);
 
-  // Ancho de columnas
+  // Anchos de columnas
   ws['!cols'] = [
-    { wch: 12 }, { wch: 24 }, { wch: 12 }, { wch: 28 }, { wch: 16 },
-    { wch: 18 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
-    { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 },
-    { wch: 12 }, { wch: 24 }, { wch: 22 }, { wch: 32 }
+    { wch: 11 }, { wch: 22 }, { wch: 12 }, { wch: 26 }, { wch: 15 }, { wch: 20 },
+    { wch: 16 }, { wch: 16 }, { wch: 10 },
+    { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 },
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 },
+    { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 10 },
+    { wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 30 }
   ];
 
-  // Formato de euros en columnas numéricas
+  // Formato € en las columnas numéricas
   const range = XLSX.utils.decode_range(ws['!ref']);
+  const euroColsIdx = [9, 11, 12, 14, 15, 16];  // Base, IVA, Recargo, IRPF, Propina, Total
   for (let R = 1; R <= range.e.r; ++R) {
-    for (const col of [7, 9, 11, 12]) { // Base, IVA, IRPF, Total
+    for (const col of euroColsIdx) {
       const cell = ws[XLSX.utils.encode_cell({ r: R, c: col })];
       if (cell && typeof cell.v === 'number') cell.z = '#,##0.00 €';
     }

@@ -1,12 +1,52 @@
-# GastósPro v2
+# GastósPro v5
 
-Gestión de gastos con formato legal español. Multi-usuario en tiempo real, OCR de tickets, roles granulares, export Excel/ZIP, libro IVA trimestral, cierres mensuales, recurrentes, kilometraje, presupuestos, aprobaciones.
+Gestión de gastos con formato legal español. Multi-usuario en tiempo real, OCR avanzado con multi-IVA, fiscalidad completa (IRPF automático, recargo equivalencia, claves AEAT, abonos/rectificativas), hoteles, matrículas, tags, modo oscuro, invitaciones por código, roles granulares, export Excel/ZIP, libro IVA trimestral desglosado, cierres mensuales, recurrentes, kilometraje, presupuestos, aprobaciones.
 
 Stack: **ES6 nativo** (sin bundler) · **Firestore** · **Cloudinary** · **GitHub Pages** · OCR híbrido (Gemini / OCR.space / Tesseract).
 
 ---
 
+## 🆕 Novedades de v5 (pack completo)
+
+**Fiscalidad avanzada:**
+- **Abonos/devoluciones** con importes en negativo y columna "ABONO" en Libro IVA
+- **Recargo de equivalencia** (0,5% / 1,4% / 5,2%) con checkbox y cálculo automático
+- **Propinas** detectadas automáticamente desde OCR (diferencia total factura vs. pagado)
+- **IRPF automático**: sugiere 15% (general) o 7% (nuevo autónomo) si detecta NIF persona física + categoría "Servicios profesionales"
+- **15 claves de operación AEAT** (modelo 303): interior, intracomunitario, arrendamientos, ISP, importación, régimen especial caja...
+- **Nº factura rectificativa** para correcciones fiscales
+- **Matrícula del vehículo** en combustible/transporte (justifica kilometraje cruzado)
+- **Pernoctas de hotel**: entrada, salida, nº noches (auto-calculado), habitación — aparecen solo si categoría = Alojamiento
+
+**UX:**
+- **Modo oscuro** con toggle en Ajustes
+- **Avatares con iniciales** y color estable en header, lista y rankings
+- **Etiquetas libres** por gasto (máx. 10) con filtro propio y búsqueda
+- **Filtros guardados**: guarda combinaciones frecuentes como "Pendientes este mes" con un clic
+- **Duplicar gasto** — botón ⎘ que abre el formulario precargado
+- **Breakdown por categoría** sobre la lista de gastos (top 4)
+- **Notificaciones al cargador**: badge rojo cuando un gasto suyo se aprueba o rechaza
+- Al cargar el Gemini OCR, los campos `recargoEquivalencia`, `propina`, `matricula`, `fechaEntrada/Salida`, `noches`, `habitacion`, `esAbono`, `numeroFacturaRectificativa`, `claveOperacion` se rellenan automáticamente si el ticket los tiene
+
+## 🆕 Novedades de v4 (OCR robusto)
+
+- **Multi-IVA**: tickets con varios tipos (4 % + 10 % + 21 %) correctamente extraídos y persistidos
+- **Saneadores**: importes "14,94€", fechas "17Apr'26", NIFs "A-80546088" → todo normalizado automáticamente
+- **Validación de coherencia**: si base+iva-irpf ≠ total, aviso antes de guardar
+- **Confianza del OCR**: Gemini devuelve alta/media/baja, visible al usuario
+- **Intracomunitario**: facturas UE detectadas y marcadas con clave 09 en modelo 303
+- **Caché OCR**: no re-llama a Gemini para el mismo ticket escaneado 2 veces
+- **Duplicados exacto vs parecido**: distinto color según diferencia (±0,02 € rojo, ±0,10 € amarillo)
+- **Libro IVA desglosado por tipo real**: una fila por cada línea de IVA
+
+## 🆕 Novedades de v3
+
+- **Sistema de invitaciones por código** de 6 caracteres (7 días, un solo uso)
+- Login restringido: solo Google o código de invitación
+- Admin puede eliminar usuarios fantasma
+
 ## 🆕 Novedades de v2
+
 
 - **4 roles** (admin / colaborador / usuario / visor) con permisos diferenciados
 - **ZIP con tickets** — Excel + carpeta de imágenes para la gestoría

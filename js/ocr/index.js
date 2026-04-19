@@ -7,6 +7,10 @@ import { ocrWithOcrSpace } from './ocrspace.js';
 import { ocrWithGemini } from './gemini.js';
 import { parseTicketText } from './parser.js';
 import { defaultOcrKeys } from '../firebase-config.js';
+import { hashFile } from '../utils/sanitize.js';
+
+// Caché en memoria del OCR por hash (duración: 1 sesión de navegador)
+const ocrCache = new Map();
 
 export const OCR_PROVIDERS = [
   { id: 'gemini',    label: '🏆 Gemini Vision (recomendado)',   needsKey: true,  keyUrl: 'https://aistudio.google.com/apikey' },
@@ -42,52 +46,67 @@ export async function scanTicket(file, onProgress = () => {}) {
   const settings = getUserOcrSettings();
   const provider = settings.provider || 'tesseract';
 
+  // Cache por hash del archivo (evita llamar a OCR 2 veces al mismo ticket)
+  let cacheKey;
   try {
-    if (provider === 'gemini') {
-      const apiKey = settings.keys?.gemini || defaultOcrKeys.gemini;
-      if (!apiKey) throw new Error('Falta API key de Gemini en ajustes');
-      onProgress({ status: 'Analizando con Gemini…', progress: 0.3 });
-      const result = await ocrWithGemini(file, apiKey);
-      onProgress({ status: 'Listo', progress: 1 });
-      return result;
+    cacheKey = `${provider}-${await hashFile(file)}`;
+    if (ocrCache.has(cacheKey)) {
+      onProgress({ status: 'Usando caché…', progress: 1 });
+      return ocrCache.get(cacheKey);
     }
+  } catch {}
 
-    if (provider === 'ocrspace') {
-      const apiKey = settings.keys?.ocrSpace || defaultOcrKeys.ocrSpace || 'helloworld';
-      onProgress({ status: 'Enviando a OCR.space…', progress: 0.3 });
-      const text = await ocrWithOcrSpace(file, apiKey);
-      onProgress({ status: 'Extrayendo datos…', progress: 0.8 });
-      const parsed = parseTicketText(text);
-      onProgress({ status: 'Listo', progress: 1 });
-      return parsed;
-    }
-
-    // Tesseract por defecto
-    onProgress({ status: 'Cargando motor OCR…', progress: 0.1 });
-    const text = await ocrWithTesseract(file, (p) => {
-      if (p.status === 'recognizing text') {
-        onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
+  const doScan = async () => {
+    try {
+      if (provider === 'gemini') {
+        const apiKey = settings.keys?.gemini || defaultOcrKeys.gemini;
+        if (!apiKey) throw new Error('Falta API key de Gemini en ajustes');
+        onProgress({ status: 'Analizando con Gemini…', progress: 0.3 });
+        const result = await ocrWithGemini(file, apiKey);
+        onProgress({ status: 'Listo', progress: 1 });
+        return result;
       }
-    });
-    onProgress({ status: 'Extrayendo datos…', progress: 0.95 });
-    const parsed = parseTicketText(text);
-    onProgress({ status: 'Listo', progress: 1 });
-    return parsed;
 
-  } catch (err) {
-    console.warn(`OCR ${provider} falló:`, err);
-    // Fallback a Tesseract si no era ya Tesseract
-    if (provider !== 'tesseract') {
-      onProgress({ status: 'Reintentando con Tesseract…', progress: 0.1 });
+      if (provider === 'ocrspace') {
+        const apiKey = settings.keys?.ocrSpace || defaultOcrKeys.ocrSpace || 'helloworld';
+        onProgress({ status: 'Enviando a OCR.space…', progress: 0.3 });
+        const text = await ocrWithOcrSpace(file, apiKey);
+        onProgress({ status: 'Extrayendo datos…', progress: 0.8 });
+        const parsed = parseTicketText(text);
+        onProgress({ status: 'Listo', progress: 1 });
+        return parsed;
+      }
+
+      // Tesseract por defecto
+      onProgress({ status: 'Cargando motor OCR…', progress: 0.1 });
       const text = await ocrWithTesseract(file, (p) => {
         if (p.status === 'recognizing text') {
           onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
         }
       });
+      onProgress({ status: 'Extrayendo datos…', progress: 0.95 });
       const parsed = parseTicketText(text);
-      onProgress({ status: 'Listo (fallback)', progress: 1 });
+      onProgress({ status: 'Listo', progress: 1 });
       return parsed;
+
+    } catch (err) {
+      console.warn(`OCR ${provider} falló:`, err);
+      if (provider !== 'tesseract') {
+        onProgress({ status: 'Reintentando con Tesseract…', progress: 0.1 });
+        const text = await ocrWithTesseract(file, (p) => {
+          if (p.status === 'recognizing text') {
+            onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
+          }
+        });
+        const parsed = parseTicketText(text);
+        onProgress({ status: 'Listo (fallback)', progress: 1 });
+        return parsed;
+      }
+      throw err;
     }
-    throw err;
-  }
+  };
+
+  const result = await doScan();
+  if (cacheKey) ocrCache.set(cacheKey, result);
+  return result;
 }

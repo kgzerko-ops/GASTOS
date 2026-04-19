@@ -38,7 +38,7 @@ function endOfDay(d) {
 }
 
 export function applyFilters(expenses, filters) {
-  const { period, customFrom, customTo, search, estado, categoria, empresa, eventoId } = filters;
+  const { period, customFrom, customTo, search, estado, categoria, empresa, eventoId, tag } = filters;
   const { from, to } = getPeriodRange(period, customFrom, customTo);
   const s = (search || '').toLowerCase().trim();
 
@@ -52,8 +52,12 @@ export function applyFilters(expenses, filters) {
     if (categoria && categoria !== 'todas' && e.categoria !== categoria) return false;
     if (empresa && empresa !== 'todas' && e.empresa !== empresa) return false;
     if (eventoId && eventoId !== 'todos' && e.eventoId !== eventoId) return false;
+    if (tag && tag !== 'todas') {
+      const tags = Array.isArray(e.tags) ? e.tags : [];
+      if (!tags.includes(tag)) return false;
+    }
     if (s) {
-      const hay = [e.proveedor, e.concepto, e.nifProveedor, e.empresa]
+      const hay = [e.proveedor, e.concepto, e.nifProveedor, e.empresa, e.matricula, ...(e.tags || [])]
         .map(x => (x || '').toLowerCase()).join(' ');
       if (!hay.includes(s)) return false;
     }
@@ -75,7 +79,7 @@ export function computeTotals(expenses) {
 export const CATEGORIAS = [
   'Combustible', 'Comida', 'Alojamiento', 'Transporte',
   'Material', 'Suministros', 'Servicios profesionales',
-  'Formación', 'Marketing', 'Comunicaciones', 'Otros'
+  'Formación', 'Marketing', 'Comunicaciones', 'Abono/Devolución', 'Otros'
 ];
 
 export const ESTADOS = [
@@ -85,5 +89,27 @@ export const ESTADOS = [
 ];
 
 export const FORMAS_PAGO = [
-  'Efectivo', 'Tarjeta', 'Transferencia', 'Bizum', 'Domiciliación', 'Otro'
+  'Efectivo', 'Tarjeta', 'Transferencia', 'Bizum', 'Domiciliación', 'Kilometraje', 'Otro'
 ];
+
+/**
+ * Calcula totales por categoría/empresa/tag/usuario para barra resumen.
+ */
+export function computeBreakdown(expenses, field = 'categoria') {
+  const byKey = {};
+  for (const e of expenses) {
+    let key;
+    if (field === 'tags') {
+      const tags = Array.isArray(e.tags) && e.tags.length > 0 ? e.tags : ['(sin etiquetas)'];
+      for (const t of tags) {
+        byKey[t] = (byKey[t] || 0) + Number(e.total || 0);
+      }
+      continue;
+    }
+    key = e[field] || '(sin definir)';
+    byKey[key] = (byKey[key] || 0) + Number(e.total || 0);
+  }
+  return Object.entries(byKey)
+    .map(([key, total]) => ({ key, total }))
+    .sort((a, b) => b.total - a.total);
+}
