@@ -20,7 +20,7 @@
 // CONFIGURACIÓN FIREBASE + CLOUDINARY
 // ═══════════════════════════════════════════════════════════════
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyDlxwt3s6RuJBpHI6JcVVt_sYOJWlwv61g",
   authDomain: "gastospro-final.firebaseapp.com",
   projectId: "gastospro-final",
