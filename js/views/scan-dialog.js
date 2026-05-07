@@ -6,12 +6,25 @@ import { openModal, showToast, escapeHtml } from '../components/modal.js';
 import { scanTicket, getOcrSettings } from '../ocr/index.js';
 import { fmtEur } from '../utils/format.js';
 import { checkCoherencia } from '../utils/sanitize.js';
+import { isFeatureEnabled, FEATURES } from '../utils/feature-flags.js';
+import { attachStructuredConfidence } from '../ocr/parser.js';
 
 export async function openScanDialog(file) {
   return new Promise((resolve) => {
-    const { close, content, footer } = openModal('Escaneando ticket', {
+    const useHybridUi = isFeatureEnabled(FEATURES.OCR_HYBRID);
+    const useConfidence = isFeatureEnabled(FEATURES.CONFIDENCE_SCORE);
+    const isImage = file && file.type && file.type.startsWith('image/');
+    const previewUrl = (useHybridUi && isImage) ? URL.createObjectURL(file) : null;
+
+    const { close: closeRaw, content, footer } = openModal('Escaneando ticket', {
       footer: `<button class="btn btn-secondary" data-act="cancel">Cancelar</button>`
     });
+
+    // Wrapper para liberar URL al cerrar
+    const close = () => {
+      if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch {} }
+      closeRaw();
+    };
 
     const settings = getOcrSettings();
 
@@ -40,7 +53,8 @@ export async function openScanDialog(file) {
       bar.style.width = Math.round(progress * 100) + '%';
     }).then((extracted) => {
       if (cancelled) return;
-      renderReview(extracted);
+      const enriched = attachStructuredConfidence(extracted);
+      renderReview(enriched);
     }).catch((err) => {
       if (cancelled) return;
       console.error('Error OCR:', err);
@@ -96,7 +110,16 @@ export async function openScanDialog(file) {
         baja: '<span class="badge badge-rejected">CONFIANZA BAJA</span>'
       }[ex.confianza || 'media'];
 
+      // Preview de imagen (con feature flag OCR_HYBRID)
+      const previewBlock = (useHybridUi && previewUrl) ? `
+        <div style="position:relative;max-height:240px;overflow:hidden;border-radius:10px;background:#0f172a;margin-bottom:10px">
+          <img src="${previewUrl}" alt="ticket" id="hybrid-img" style="width:100%;max-height:240px;object-fit:contain;cursor:zoom-in;display:block">
+          <div style="position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,.6);color:white;padding:3px 8px;border-radius:6px;font-size:11px">Toca para ampliar</div>
+        </div>
+      ` : '';
+
       content.innerHTML = `
+        ${previewBlock}
         <div class="alert alert-success" style="margin-bottom:12px">
           <strong>✓ Datos extraídos.</strong> ${confBadge}<br>
           <small>Revisa y ajusta antes de aplicar.</small>
@@ -245,6 +268,15 @@ export async function openScanDialog(file) {
 
       renderLineas();
       updateResumen();
+
+      // Click en imagen para zoom
+      const img = content.querySelector('#hybrid-img');
+      if (img && previewUrl) {
+        img.addEventListener('click', () => {
+          const { content: pvContent } = openModal('Vista del ticket');
+          pvContent.innerHTML = `<img src="${previewUrl}" style="width:100%;border-radius:8px">`;
+        });
+      }
 
       footer.innerHTML = `
         <button class="btn btn-secondary" data-act="discard">Descartar</button>

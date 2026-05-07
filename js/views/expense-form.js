@@ -17,6 +17,11 @@ import {
 import { openScanDialog } from './scan-dialog.js';
 import { availableCompanies, canCreate } from '../roles.js';
 
+// Imports mejoras (con feature flags)
+import { isFeatureEnabled, FEATURES, withFeature } from '../utils/feature-flags.js';
+import { suggestFromMemory, rememberVendor } from '../db-vendor-memory.js';
+import { validateNifEnhanced } from '../utils/nif-validation.js';
+
 const MAX_FOTOS = 5;
 
 function emptyForm(user, prefill = {}) {
@@ -153,6 +158,10 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
   // ── NIF validación + sugerencia IRPF automática ──
   const nifField = $f('nifProveedor');
   const nifFb = content.querySelector('#nif-feedback');
+  const memoryAlert = content.querySelector('#vendor-memory-alert');
+  let lastSuggestedNif = '';
+  let nifEnhancedTimer = null;
+
   function updateNifAndIrpf() {
     const v = nifField.value.trim();
     if (!v) { nifFb.textContent = ''; return; }
@@ -162,6 +171,23 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
     } else {
       nifFb.textContent = '⚠ Formato no válido';
       nifFb.className = 'text-warning';
+    }
+    // Validación reforzada con dígito de control (con feature flag)
+    if (isFeatureEnabled(FEATURES.NIF_VALIDATION)) {
+      clearTimeout(nifEnhancedTimer);
+      nifEnhancedTimer = setTimeout(async () => {
+        const r = await withFeature(FEATURES.NIF_VALIDATION,
+          () => validateNifEnhanced(v, { useVies: false }), null);
+        if (r) {
+          if (r.valid) {
+            nifFb.textContent = `✓ ${r.type.toUpperCase()} válido${esNifPersonaFisica(v) ? ' (persona física)' : ''}`;
+            nifFb.className = 'text-success';
+          } else {
+            nifFb.textContent = `⚠ ${r.reason}`;
+            nifFb.className = 'text-warning';
+          }
+        }
+      }, 250);
     }
     // Sugerir IRPF
     const sug = sugerenciaIrpf({ categoria: $f('categoria').value, nifProveedor: v });
@@ -182,6 +208,43 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
     }
   }
   nifField.addEventListener('input', updateNifAndIrpf);
+  // Sugerencia desde memoria de proveedor (al perder foco)
+  nifField.addEventListener('change', async () => {
+    if (isEdit) return;
+    const nif = nifField.value.trim().toUpperCase();
+    if (!nif || nif === lastSuggestedNif) return;
+    lastSuggestedNif = nif;
+    if (!memoryAlert) return;
+    const suggestion = await withFeature(FEATURES.VENDOR_MEMORY,
+      () => suggestFromMemory(nif), null);
+    if (!suggestion || suggestion.count === 0) { memoryAlert.innerHTML = ''; return; }
+    memoryAlert.innerHTML = `
+      <div class="alert alert-info" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div>
+          <strong>📌 Proveedor conocido</strong> (${suggestion.count} ${suggestion.count === 1 ? 'gasto previo' : 'gastos previos'})<br>
+          <span style="font-size:12px">Pulsa "Aplicar" para rellenar campos vacíos.</span>
+        </div>
+        <button class="btn btn-sm btn-primary" id="apply-memory">Aplicar</button>
+      </div>`;
+    memoryAlert.querySelector('#apply-memory').addEventListener('click', () => {
+      if (!$f('proveedor').value && suggestion.proveedor) $f('proveedor').value = suggestion.proveedor;
+      const catSelect = $f('categoria');
+      if (catSelect && suggestion.categoria) {
+        const opt = Array.from(catSelect.options).find(o => o.value === suggestion.categoria);
+        if (opt) catSelect.value = suggestion.categoria;
+      }
+      const ivaSelect = $f('tipoIva');
+      if (ivaSelect && suggestion.tipoIva != null) {
+        ivaSelect.value = String(suggestion.tipoIva);
+        autoCalc();
+      }
+      const fpSelect = $f('formaPago');
+      if (fpSelect && suggestion.formaPago) fpSelect.value = suggestion.formaPago;
+      memoryAlert.innerHTML = '<div class="alert alert-success" style="font-size:13px">✓ Datos del proveedor aplicados.</div>';
+      setTimeout(() => { memoryAlert.innerHTML = ''; }, 2500);
+      updateCamposCondicionales();
+    });
+  });
   $f('categoria').addEventListener('change', () => {
     updateNifAndIrpf();
     updateCamposCondicionales();
@@ -518,6 +581,11 @@ export async function openExpenseForm(expense, state, onSave, prefill = null) {
     try {
       if (isEdit) await updateExpense(expense.id, data);
       else await createExpense(data);
+
+      // Alimentar memoria de proveedor (no bloqueante, con feature flag)
+      withFeature(FEATURES.VENDOR_MEMORY, () => rememberVendor(data), null)
+        .catch(err => console.warn('vendor-memory:', err));
+
       close();
       onSave?.();
     } catch (err) {
@@ -544,6 +612,7 @@ function renderFormHtml(form, companies, events) {
 
     <div id="closed-alert"></div>
     <div id="dup-alert"></div>
+    <div id="vendor-memory-alert"></div>
     <div id="budget-alert"></div>
 
     <div id="abono-banner" class="alert alert-warning ${form.esAbono ? '' : 'hidden'}" style="font-size:13px">

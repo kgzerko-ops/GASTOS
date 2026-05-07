@@ -190,3 +190,25 @@ export function parseNumeroES(s) {
   }
   return parseFloat(x);
 }
+
+/**
+ * Inyecta confidence por campo en una respuesta estructurada de Gemini
+ * que aún no la tenga. Compatible con la feature CONFIDENCE_SCORE.
+ * Si el extracted ya viene con _confidence, lo deja igual.
+ */
+export function attachStructuredConfidence(extracted) {
+  if (!extracted) return extracted;
+  if (extracted._confidence) return extracted;
+  // Solo enriquecer si vino estructurado (Gemini) o si la confianza global es alta
+  const isStructured = extracted._structured === true || extracted.confianza === 'alta';
+  if (!isStructured) return extracted;
+  const conf = {};
+  ['proveedor', 'nifProveedor', 'fecha', 'numeroDocumento'].forEach(k => {
+    conf[k] = extracted[k] ? 0.95 : 0;
+  });
+  ['baseImponible', 'ivaTotal', 'total'].forEach(k => {
+    conf[k] = (extracted[k] !== undefined && extracted[k] !== null && extracted[k] > 0) ? 0.95 : 0.3;
+  });
+  conf.tipoIva = extracted.tipoIva !== undefined ? 0.95 : 0.3;
+  return { ...extracted, _confidence: conf };
+}

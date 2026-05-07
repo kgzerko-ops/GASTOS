@@ -4,6 +4,7 @@
 
 import { OCR_PROVIDERS, getOcrSettings, saveUserOcrSettings } from '../ocr/index.js';
 import { showToast, escapeHtml } from '../components/modal.js';
+import { isAdmin } from '../roles.js';
 
 const THEME_KEY = 'gastospro-theme';
 
@@ -81,6 +82,16 @@ export async function renderSettings(container, state) {
       </div>
     </div>
 
+    ${isAdmin(state.user) ? `
+    <div class="card mb-16">
+      <h3>🧪 Experimental <span class="badge badge-pending">admin</span></h3>
+      <p class="text-muted" style="font-size:13px;margin:0 0 12px">
+        Activa funciones nuevas en pruebas (memoria proveedores, validación NIF, pre-procesado imagen, tutorial, wizard, etc.). Cada feature se puede activar/desactivar sin redeploy.
+      </p>
+      <button id="btn-experimental" class="btn btn-secondary">Abrir Experimental →</button>
+    </div>
+    ` : ''}
+
     <div class="card">
       <h3>Sobre GastósPro v5</h3>
       <p style="font-size:13px;color:var(--text-muted);margin:0 0 8px">
@@ -111,4 +122,12 @@ export async function renderSettings(container, state) {
     saveUserOcrSettings({ provider, keys });
     showToast('Ajustes guardados', 'success');
   });
+
+  // Botón Experimental (solo admin)
+  const expBtn = container.querySelector('#btn-experimental');
+  if (expBtn) {
+    expBtn.addEventListener('click', () => {
+      if (window.GastosPro?.navigateTo) window.GastosPro.navigateTo('experimental');
+    });
+  }
 }

@@ -1,0 +1,66 @@
+═══════════════════════════════════════════════════════
+  TESTS GastósPro v5 — 10 archivos nuevos
+═══════════════════════════════════════════════════════
+
+▸ Validación NIF (mejora 2)
+  ✓ normalizeNif: limpia espacios, guiones, mayúsculas
+  ✓ detectNifType: DNI
+  ✓ detectNifType: NIE
+  ✓ detectNifType: CIF
+  ✓ detectNifType: inválido
+  ✓ validateNifFull: DNI válido (12345678Z)
+  ✓ validateNifFull: DNI inválido (control mal)
+  ✓ validateNifFull: vacío
+  ✓ validateNif compatible API antigua
+
+▸ Feature flags (núcleo)
+  ✓ Feature inicia desactivada
+  ✓ enableFeature activa
+  ✓ disableFeature desactiva
+  ✓ getAllFlags devuelve objeto
+  ✓ FEATURES tiene 11 entradas
+  ✓ FEATURE_LABELS para cada feature
+
+▸ Device detection (mejora 4)
+  ✓ withFeature devuelve fallback si desactivada
+  ✓ withFeature ejecuta si activa
+  ✓ withFeature devuelve fallback si throw
+  ✓ Auto-desactivación tras 3 errores
+  ✓ isMobileUserAgent: desktop
+  ✓ isMobileUserAgent: iPhone
+  ✓ isMobileUserAgent: Android
+  ✓ isTouchDevice: sin touch
+  ✓ isTouchDevice: con touch
+  ✓ isSmallViewport: <768
+  ✓ isSmallViewport: >=768
+  ✓ getDeviceType: mobile
+  ✓ getDeviceType: desktop
+  ✓ shouldUseMobileUx: desktop=false
+
+▸ Quick Capture detector (mejora 8)
+  ✓ TICKET_TYPES tiene 7 tipos
+  ✓ detectTicketType: restaurante
+  ✓ detectTicketType: combustible
+  ✓ detectTicketType: parking
+  ✓ detectTicketType: taxi
+  ✓ detectTicketType: hotel
+  ✓ detectTicketType: supermercado
+  ✓ detectTicketType: otro si no match
+  ✓ getRelevantFields: restaurante
+  ✓ getRelevantFields: combustible incluye base
+
+▸ Sintaxis (node --check ya validado, verificación adicional)
+  ✓ ./js/utils/feature-flags.js
+  ✓ ./js/utils/device.js
+  ✓ ./js/utils/nif-validation.js
+  ✓ ./js/utils/image-preprocess.js
+  ✓ ./js/utils/quick-capture.js
+  ✓ ./js/utils/camera-helper.js
+  ✓ ./js/db-vendor-memory.js
+  ✓ ./js/views/experimental.js
+  ✓ ./js/views/tutorial.js
+  ✓ ./js/views/wizard-setup.js
+
+═══════════════════════════════════════════════════════
+  PASSED: 49  FAILED: 0
+═══════════════════════════════════════════════════════

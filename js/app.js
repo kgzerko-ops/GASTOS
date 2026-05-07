@@ -9,9 +9,14 @@ import { firebaseConfig } from './firebase-config.js';
 import { showToast, openModal } from './components/modal.js';
 import { canCreate, isAdmin } from './roles.js';
 import { applyTheme, getTheme } from './views/settings.js';
+import { installErrorTracking, isFeatureEnabled, FEATURES } from './utils/feature-flags.js';
 
 // Aplicar tema antes de cualquier render
 applyTheme(getTheme());
+
+// Toast global para auto-desactivación de features
+window.__gastosproToast = showToast;
+installErrorTracking();
 
 import { renderPanel } from './views/dashboard.js';
 import { renderExpenses, openExpenseForm } from './views/expenses.js';
@@ -23,6 +28,9 @@ import { renderClosures } from './views/closures.js';
 import { renderIvaBook } from './views/iva.js';
 import { renderRecurring } from './views/recurring.js';
 import { openMileageDialog } from './views/mileage.js';
+import { renderExperimental } from './views/experimental.js';
+import { runTutorial, isTutorialCompleted } from './views/tutorial.js';
+import { runSetupWizard, shouldLaunchWizard } from './views/wizard-setup.js';
 
 const state = {
   user: null,
@@ -149,6 +157,20 @@ onAuthReady(async (user) => {
 
   startPendingWatcher();
   await renderActiveTab();
+
+  // Tutorial primer uso (con feature flag)
+  if (isFeatureEnabled(FEATURES.TUTORIAL) && !isTutorialCompleted()) {
+    setTimeout(() => { try { runTutorial(); } catch (e) { console.warn('Tutorial:', e); } }, 800);
+  }
+
+  // Wizard configuración inicial admin (con feature flag)
+  if (isFeatureEnabled(FEATURES.WIZARD) && state.isAdmin) {
+    try {
+      if (await shouldLaunchWizard(state)) {
+        setTimeout(() => { try { runSetupWizard(state); } catch (e) { console.warn('Wizard:', e); } }, 1500);
+      }
+    } catch (e) { console.warn('Wizard check:', e); }
+  }
 });
 
 function showView(name) {
@@ -172,6 +194,7 @@ async function renderActiveTab() {
       case 'iva':        await renderIvaBook(content, state); break;
       case 'recurring':  await renderRecurring(content, state); break;
       case 'settings':   await renderSettings(content, state); break;
+      case 'experimental':  await renderExperimental(content, state); break;
       default:           await renderPanel(content, state);
     }
   } catch (err) {
@@ -239,5 +262,7 @@ window.GastosPro = {
     renderActiveTab();
   },
   refresh: renderActiveTab,
-  getState: () => state
+  getState: () => state,
+  runTutorial: () => runTutorial({ force: true }),
+  runWizard: () => runSetupWizard(state)
 };

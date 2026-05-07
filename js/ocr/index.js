@@ -8,6 +8,13 @@ import { ocrWithGemini } from './gemini.js';
 import { parseTicketText } from './parser.js';
 import { defaultOcrKeys } from '../firebase-config.js';
 import { hashFile } from '../utils/sanitize.js';
+import { isFeatureEnabled, FEATURES, withFeature } from '../utils/feature-flags.js';
+import { preprocessImage } from '../utils/image-preprocess.js';
+
+function blobToFile(blob, originalFile) {
+  const name = originalFile.name || 'ticket.jpg';
+  return new File([blob], name, { type: blob.type || 'image/jpeg', lastModified: Date.now() });
+}
 
 // Caché en memoria del OCR por hash (duración: 1 sesión de navegador)
 const ocrCache = new Map();
@@ -46,10 +53,23 @@ export async function scanTicket(file, onProgress = () => {}) {
   const settings = getUserOcrSettings();
   const provider = settings.provider || 'tesseract';
 
+  // Pre-procesado de imagen (con feature flag IMAGE_PREPROCESS)
+  let processedFile = file;
+  if (file && file.type && file.type.startsWith('image/')) {
+    const r = await withFeature(FEATURES.IMAGE_PREPROCESS, async () => {
+      onProgress({ status: 'Optimizando imagen…', progress: 0.05 });
+      return await preprocessImage(file);
+    }, null);
+    if (r && r.blob) {
+      processedFile = blobToFile(r.blob, file);
+      console.log(`[image-preprocess] ${r.originalSize} → ${r.finalSize} bytes${r.fromCache ? ' [cache]' : ''}`);
+    }
+  }
+
   // Cache por hash del archivo (evita llamar a OCR 2 veces al mismo ticket)
   let cacheKey;
   try {
-    cacheKey = `${provider}-${await hashFile(file)}`;
+    cacheKey = `${provider}-${await hashFile(processedFile)}`;
     if (ocrCache.has(cacheKey)) {
       onProgress({ status: 'Usando caché…', progress: 1 });
       return ocrCache.get(cacheKey);
@@ -62,7 +82,7 @@ export async function scanTicket(file, onProgress = () => {}) {
         const apiKey = settings.keys?.gemini || defaultOcrKeys.gemini;
         if (!apiKey) throw new Error('Falta API key de Gemini en ajustes');
         onProgress({ status: 'Analizando con Gemini…', progress: 0.3 });
-        const result = await ocrWithGemini(file, apiKey);
+        const result = await ocrWithGemini(processedFile, apiKey);
         onProgress({ status: 'Listo', progress: 1 });
         return result;
       }
@@ -70,7 +90,7 @@ export async function scanTicket(file, onProgress = () => {}) {
       if (provider === 'ocrspace') {
         const apiKey = settings.keys?.ocrSpace || defaultOcrKeys.ocrSpace || 'helloworld';
         onProgress({ status: 'Enviando a OCR.space…', progress: 0.3 });
-        const text = await ocrWithOcrSpace(file, apiKey);
+        const text = await ocrWithOcrSpace(processedFile, apiKey);
         onProgress({ status: 'Extrayendo datos…', progress: 0.8 });
         const parsed = parseTicketText(text);
         onProgress({ status: 'Listo', progress: 1 });
@@ -79,7 +99,7 @@ export async function scanTicket(file, onProgress = () => {}) {
 
       // Tesseract por defecto
       onProgress({ status: 'Cargando motor OCR…', progress: 0.1 });
-      const text = await ocrWithTesseract(file, (p) => {
+      const text = await ocrWithTesseract(processedFile, (p) => {
         if (p.status === 'recognizing text') {
           onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
         }
@@ -111,11 +131,11 @@ export async function scanTicket(file, onProgress = () => {}) {
       }
 
       // Tesseract NO sabe leer PDFs — no intentar fallback en ese caso
-      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+      const isPdf = processedFile.type === 'application/pdf' || /\.pdf$/i.test(processedFile.name || '');
       if (provider !== 'tesseract' && !isPdf) {
         onProgress({ status: 'Reintentando con Tesseract…', progress: 0.1 });
         try {
-          const text = await ocrWithTesseract(file, (p) => {
+          const text = await ocrWithTesseract(processedFile, (p) => {
             if (p.status === 'recognizing text') {
               onProgress({ status: 'Leyendo ticket…', progress: 0.2 + p.progress * 0.7 });
             }

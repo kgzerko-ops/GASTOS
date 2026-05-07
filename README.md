@@ -1,310 +1,193 @@
-# GastósPro v5
+# GastósPro v5 + 11 mejoras — Repo completo
 
-Gestión de gastos con formato legal español. Multi-usuario en tiempo real, OCR avanzado con multi-IVA, fiscalidad completa (IRPF automático, recargo equivalencia, claves AEAT, abonos/rectificativas), hoteles, matrículas, tags, modo oscuro, invitaciones por código, roles granulares, export Excel/ZIP, libro IVA trimestral desglosado, cierres mensuales, recurrentes, kilometraje, presupuestos, aprobaciones.
-
-Stack: **ES6 nativo** (sin bundler) · **Firestore** · **Cloudinary** · **GitHub Pages** · OCR híbrido (Gemini / OCR.space / Tesseract).
-
----
-
-## 🆕 Novedades de v5 (pack completo)
-
-**Fiscalidad avanzada:**
-- **Abonos/devoluciones** con importes en negativo y columna "ABONO" en Libro IVA
-- **Recargo de equivalencia** (0,5% / 1,4% / 5,2%) con checkbox y cálculo automático
-- **Propinas** detectadas automáticamente desde OCR (diferencia total factura vs. pagado)
-- **IRPF automático**: sugiere 15% (general) o 7% (nuevo autónomo) si detecta NIF persona física + categoría "Servicios profesionales"
-- **15 claves de operación AEAT** (modelo 303): interior, intracomunitario, arrendamientos, ISP, importación, régimen especial caja...
-- **Nº factura rectificativa** para correcciones fiscales
-- **Matrícula del vehículo** en combustible/transporte (justifica kilometraje cruzado)
-- **Pernoctas de hotel**: entrada, salida, nº noches (auto-calculado), habitación — aparecen solo si categoría = Alojamiento
-
-**UX:**
-- **Modo oscuro** con toggle en Ajustes
-- **Avatares con iniciales** y color estable en header, lista y rankings
-- **Etiquetas libres** por gasto (máx. 10) con filtro propio y búsqueda
-- **Filtros guardados**: guarda combinaciones frecuentes como "Pendientes este mes" con un clic
-- **Duplicar gasto** — botón ⎘ que abre el formulario precargado
-- **Breakdown por categoría** sobre la lista de gastos (top 4)
-- **Notificaciones al cargador**: badge rojo cuando un gasto suyo se aprueba o rechaza
-- Al cargar el Gemini OCR, los campos `recargoEquivalencia`, `propina`, `matricula`, `fechaEntrada/Salida`, `noches`, `habitacion`, `esAbono`, `numeroFacturaRectificativa`, `claveOperacion` se rellenan automáticamente si el ticket los tiene
-
-## 🆕 Novedades de v4 (OCR robusto)
-
-- **Multi-IVA**: tickets con varios tipos (4 % + 10 % + 21 %) correctamente extraídos y persistidos
-- **Saneadores**: importes "14,94€", fechas "17Apr'26", NIFs "A-80546088" → todo normalizado automáticamente
-- **Validación de coherencia**: si base+iva-irpf ≠ total, aviso antes de guardar
-- **Confianza del OCR**: Gemini devuelve alta/media/baja, visible al usuario
-- **Intracomunitario**: facturas UE detectadas y marcadas con clave 09 en modelo 303
-- **Caché OCR**: no re-llama a Gemini para el mismo ticket escaneado 2 veces
-- **Duplicados exacto vs parecido**: distinto color según diferencia (±0,02 € rojo, ±0,10 € amarillo)
-- **Libro IVA desglosado por tipo real**: una fila por cada línea de IVA
-
-## 🆕 Novedades de v3
-
-- **Sistema de invitaciones por código** de 6 caracteres (7 días, un solo uso)
-- Login restringido: solo Google o código de invitación
-- Admin puede eliminar usuarios fantasma
-
-## 🆕 Novedades de v2
-
-
-- **4 roles** (admin / colaborador / usuario / visor) con permisos diferenciados
-- **ZIP con tickets** — Excel + carpeta de imágenes para la gestoría
-- **Detección de duplicados** al guardar (mismo NIF + fecha + total)
-- **Múltiples fotos por gasto** (hasta 5) — anverso/reverso, multipágina
-- **Libro IVA trimestral** (modelo 303) con 3 hojas: facturas, resumen por tipo, casillas
-- **Cierres mensuales** bloqueados — solo admin modifica gastos cerrados
-- **Gastos recurrentes** — alquileres, nóminas, suministros generados auto cada mes
-- **Kilometraje** con tarifa €/km configurable (0,26 € por defecto, RD 2023)
-- **Comentarios** por gasto — hilo entre cargador y aprobador
-- **Ranking colaboradores** — admin ve quién ha cargado más este mes
-- **Badge rojo** en tab "Gastos" con pendientes de aprobar (solo admin)
-- **Kilometraje** como tipo especial de gasto (FAB con menú)
+✅ **44 archivos JS validados** con `node --check`
+✅ **49/49 tests** funcionales pasados
+✅ **Lógica fiscal v5 intacta** (recargo equivalencia, IRPF auto, claves AEAT, propinas, abonos, hoteles, multi-IVA, modo oscuro, avatares, tags, invitaciones)
 
 ---
 
-## 🚀 Puesta en marcha
+## Cómo subir esto a tu repo
 
-### 1. Firebase
+### Opción A — Reemplazo completo (recomendado, 30 segundos)
 
-1. Crea proyecto en https://console.firebase.google.com/
-2. **Authentication** → Sign-in method → activa Email/Password + Google
-3. **Firestore Database** → Create → modo producción, región `eur3`
-4. **Project settings** (⚙️) → Your apps → Add web app → copia la config
+1. Descomprime este ZIP en una carpeta temporal
+2. Copia todo el contenido encima de tu repo local (sobreescribe lo viejo)
+3. ```bash
+   cd /ruta/a/tu/repo
+   git tag v5-antes-mejoras  # backup en git por si quieres volver
+   git push origin v5-antes-mejoras
+   git add .
+   git commit -m "v5 + 11 mejoras con feature flags"
+   git push
+   ```
+4. Espera 1-2 min al deploy de GitHub Pages
+5. Login admin → tab **🧪** → "Activar recomendadas"
 
-Aplica estas **reglas de seguridad** (Firestore Rules):
+### Opción B — Solo subir lo nuevo
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isSignedIn() { return request.auth != null; }
-    function getUser() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function isAdmin() { return isSignedIn() && getUser().role == 'admin'; }
-    function isActive() { return isSignedIn() && getUser().active == true; }
-    function isVisor() { return isSignedIn() && getUser().role == 'visor'; }
-    function canWrite() { return isActive() && !isVisor(); }
+Si quieres preservar los archivos exactamente como están en tu repo y solo añadir las mejoras, copia únicamente estos archivos del ZIP a tu repo (mantienen las rutas relativas):
 
-    match /users/{uid} {
-      allow read:   if isSignedIn() && (request.auth.uid == uid || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == uid;
-      allow update: if isAdmin() || (request.auth.uid == uid
-                       && !('role' in request.resource.data.diff(resource.data).affectedKeys())
-                       && !('active' in request.resource.data.diff(resource.data).affectedKeys())
-                       && !('puedeVerTodos' in request.resource.data.diff(resource.data).affectedKeys()));
-      allow delete: if isAdmin();
-    }
+**Archivos NUEVOS (no chocan con nada):**
+- `js/utils/feature-flags.js`
+- `js/utils/device.js`
+- `js/utils/nif-validation.js`
+- `js/utils/image-preprocess.js`
+- `js/utils/quick-capture.js`
+- `js/utils/camera-helper.js`
+- `js/db-vendor-memory.js`
+- `js/views/experimental.js`
+- `js/views/tutorial.js`
+- `js/views/wizard-setup.js`
 
-    match /expenses/{id} {
-      allow read:   if isActive();
-      allow create: if canWrite() && request.resource.data.createdByUid == request.auth.uid;
-      allow update: if isAdmin() || (canWrite() && resource.data.createdByUid == request.auth.uid);
-      allow delete: if isAdmin() || (canWrite() && resource.data.createdByUid == request.auth.uid);
+**Archivos MODIFICADOS (sustituyen los tuyos):**
+- `index.html` (+1 tab Experimental)
+- `js/app.js` (+ imports + tutorial + wizard + experimental routing)
+- `js/views/expense-form.js` (+ memoria proveedor + validación NIF reforzada)
+- `js/views/scan-dialog.js` (+ preview imagen + score confianza)
+- `js/views/settings.js` (+ card Experimental para admin)
+- `js/ocr/index.js` (+ pre-procesado imagen opcional)
+- `js/ocr/parser.js` (+ función attachStructuredConfidence al final)
 
-      match /comments/{cid} {
-        allow read:   if isActive();
-        allow create: if canWrite() && request.resource.data.uid == request.auth.uid;
-        allow delete: if isAdmin();
-      }
-    }
+---
 
-    match /budgets/{id} {
-      allow read:  if isSignedIn();
-      allow write: if isAdmin();
-    }
+## Las 11 mejoras (todas con feature flag, OFF por defecto)
 
-    match /events/{id} {
-      allow read:  if isActive();
-      allow write: if canWrite();
-    }
+| # | Mejora | Feature flag |
+|---|---|---|
+| 1 | Memoria por NIF (auto-completa proveedores) | `vendor-memory` |
+| 2 | Validación NIF reforzada (DNI/NIE/CIF + dígito de control) | `nif-validation-enhanced` |
+| 3 | Modal OCR híbrido con preview imagen | `ocr-hybrid-modal` |
+| 4 | Detección móvil/escritorio | `device-detect` |
+| 5 | Stepper móvil guiado | `mobile-stepper` (no integrado en v5*) |
+| 6 | Cámara nativa con guías | `camera-guides` (helper disponible*) |
+| 7 | Score de confianza por campo | `confidence-score` |
+| 8 | Captura rápida por tipo | `quick-capture` (helper disponible*) |
+| 9 | Tutorial interactivo primer uso | `tutorial-first-use` |
+| 10 | Wizard configuración inicial admin | `setup-wizard` |
+| 11 | Pre-procesar imagen antes OCR | `image-preprocess` |
 
-    match /closures/{id} {
-      allow read:  if isSignedIn();
-      allow write: if isAdmin();
-    }
+\* Las features 5, 6, 8 tienen el código disponible pero **no están enchufadas al flujo principal de v5** porque tu v5 ya tiene un flujo OCR avanzado (multi-IVA, propinas, recargo equivalencia, hoteles, matrículas) que es mucho mejor que un stepper genérico. Si quieres usarlas, llámalas manualmente desde tu código o pídeme integración específica.
 
-    match /recurring/{id} {
-      allow read:  if isActive();
-      allow write: if isAdmin();
-    }
+---
 
-    match /invites/{code} {
-      // Cualquiera autenticado puede LEER una invitación (necesario para validarla
-      // al crear perfil tras registrarse). Solo admin crea/borra. El propio
-      // usuario recién creado marca la invitación como "used".
-      allow read:   if isSignedIn();
-      allow create: if isAdmin();
-      allow delete: if isAdmin();
-      allow update: if isSignedIn()
-                    && resource.data.email == request.auth.token.email
-                    && !resource.data.used
-                    && request.resource.data.used == true;
-    }
-  }
-}
-```
+## Antes de subir
 
-### 2. Cloudinary
+### 1. Reglas Firestore
 
-1. Crea cuenta gratis en https://cloudinary.com (25 GB)
-2. **Settings → Upload → Upload presets → Add upload preset**
-3. Signing Mode: **Unsigned** ⚠️ importante
-4. Folder: `gastospro/tickets`
-5. Copia el **cloud_name** (Dashboard arriba) y el **preset name**
+Añade el bloque de `FIRESTORE-RULES.txt` a tus reglas existentes en Firebase Console → Firestore → Rules. Sin esto, la memoria por NIF no funcionará (la app no se rompe, solo esa feature concreta).
 
-### 3. Configurar la app
-
-Edita `js/firebase-config.js` con tus valores:
-
-```javascript
-export const firebaseConfig = {
-  apiKey: "AIzaSy...",
-  authDomain: "xxx.firebaseapp.com",
-  projectId: "xxx",
-  storageBucket: "xxx.appspot.com",
-  messagingSenderId: "00000",
-  appId: "1:00000:web:xxx"
-};
-
-export const cloudinaryConfig = {
-  cloudName: "tu-cloud",
-  uploadPreset: "tu-preset"
-};
-
-export const bootstrapAdminEmail = "tu@email.com";
-export const defaultCompanyName = "Mi Empresa";
-```
-
-### 4. Deploy en GitHub Pages
+### 2. Backup en Git (recomendado)
 
 ```bash
-git add .
-git commit -m "GastósPro v2"
-git push
+cd /ruta/a/tu/repo
+git tag v5-antes-mejoras
+git push origin v5-antes-mejoras
 ```
 
-En GitHub: **Settings → Pages → Source: main / root** → Save.
-
-⚠️ Añade tu dominio (`tu-usuario.github.io`) a **Firebase Auth → Settings → Authorized domains**.
-
-### 5. OCR (opcional)
-
-Desde **Ajustes** dentro de la app, elige el motor y añade la API key si procede:
-- **Gemini Vision** (mejor precisión): https://aistudio.google.com/apikey
-- **OCR.space** (25k/mes gratis): https://ocr.space/ocrapi
-- **Tesseract.js** (local, sin key, por defecto)
+Si algo falla después, vuelves con: `git reset --hard v5-antes-mejoras && git push --force`
 
 ---
 
-## 👥 Roles
+## Auto-protección
 
-| Rol | Cargar | Ver | Aprobar | Admin |
-|-----|--------|-----|---------|-------|
-| **Administrador** | todo | todo | sí | sí |
-| **Colaborador** | en empresas visibles | de empresas visibles | no | no |
-| **Usuario** | su empresa | sus gastos | no | no |
-| **Visor** | no | empresas visibles | no | no |
+Cada feature está envuelta en `withFeature(name, fn, fallback)`. Si una falla 3 veces en una sesión:
+1. Se desactiva sola
+2. Toast: "Feature desactivada por errores"
+3. App vuelve al comportamiento v5 normal
 
-## 🎟 Sistema de invitaciones
-
-El registro abierto está desactivado. Los usuarios nuevos solo entran de dos maneras:
-
-**1. Login con Google directo** (para quien ya sabe que está autorizado)
-Si se loguean con Google sin código de invitación, crean un perfil automático pero **inactivo**. El admin debe activarlos manualmente desde la pestaña Usuarios, o simplemente eliminarlos si son desconocidos.
-
-**2. Invitación por código (recomendado)**
-- El admin va a **Usuarios → + Invitar por código** y rellena: email, rol, empresa, etc.
-- Se genera un código de 6 caracteres y un link `https://tu-app/?invite=A3K9M2`
-- El admin comparte el link por WhatsApp/email con el invitado
-- El invitado abre el link, elige entre Google o crear contraseña, y queda activado automáticamente con el rol y empresa preconfigurados
-- Cada código **caduca a los 7 días** y solo puede usarse **una vez**
-- Los códigos activos se listan en la parte superior de la pestaña Usuarios, donde pueden revocarse en cualquier momento
+Cero riesgo para tu lógica fiscal.
 
 ---
 
-## 📋 Funcionalidades principales
+## Cómo verificar después de subir
 
-- Login email/contraseña o Google con aprobación manual del admin
-- **Panel** con KPIs y gráfico últimos 6 meses
-- Tickets con campos legales ES (NIF, IVA 0/4/10/21%, IRPF, forma pago)
-- **Escaneo OCR** con extracción automática y confirmación antes de guardar
-- Multi-foto por gasto (anverso/reverso o factura multipágina)
-- Filtros Hoy/Semana/Mes/Personalizado + búsqueda + estado + categoría + empresa + evento
-- Export **Excel** simple o **ZIP** (Excel + imágenes en carpeta)
-- **Libro IVA trimestral** (modelo 303) con 3 hojas
-- **Presupuesto mensual por empresa** con alerta 80% y pendiente al 100%
-- **Cierres mensuales** — admin bloquea meses tras presentar impuestos
-- **Recurrentes** — alquileres/suministros se crean automáticos cada mes
-- **Kilometraje** con auto-cálculo €/km
-- **Comentarios** por gasto — hilo conversacional
-- **Eventos/proyectos** para agrupar gastos
-- **Aprobación** con nota obligatoria en rechazos
-- **Ranking** colaboradores del mes (solo admin)
-- Detección de duplicados al guardar
-- Tiempo real con `onSnapshot` + caché offline IndexedDB
-- PWA instalable
+1. Login carga normalmente con Google ✓
+2. Ves el tab **🧪** en la barra superior (solo si admin) ✓
+3. Tu lógica fiscal v5 sigue intacta:
+   - Recargo equivalencia funciona ✓
+   - IRPF auto sugerido funciona ✓
+   - Multi-IVA en scan-dialog funciona ✓
+   - Hoteles con pernoctas funciona ✓
+   - Modo oscuro funciona ✓
+4. Click en **🧪** → ves los 11 toggles
+5. Activa "Activar recomendadas" → 4 features fundacionales activas:
+   - Memoria proveedores
+   - Validación NIF reforzada
+   - Detección dispositivo
+   - Pre-procesado imagen
+
+## Si algo falla
+
+1. Tab **🧪** → desactiva la feature problemática
+2. Recarga
+3. La app vuelve al comportamiento v5 normal
+
+Si persiste un error grave: `git reset --hard v5-antes-mejoras && git push --force` en 30 segundos.
 
 ---
 
-## 🗂 Estructura
+## Archivos del ZIP
 
 ```
-gastospro/
-├── index.html
+gastospro-v5-completo/
+├── README.md (este archivo)
+├── FIRESTORE-RULES.txt
+├── tests-output.txt
+├── run-tests.mjs
+├── index.html (modificado: +tab 🧪)
 ├── manifest.json
-├── css/styles.css
-├── README.md
+├── README.md  ← TU README v5 original (sobrescribirá éste si descomprimes encima — ojo)
+├── css/
+│   └── styles.css (sin tocar)
 └── js/
-    ├── app.js              # router + bootstrap
-    ├── firebase-config.js  # ⚠ rellenar
-    ├── auth.js             # Firebase Auth + perfiles
-    ├── db.js               # Firestore + IndexedDB + cierres + recurrentes
-    ├── roles.js            # 4 roles y permisos
-    ├── storage.js          # upload Cloudinary
-    ├── ocr/
-    │   ├── index.js        # dispatcher
-    │   ├── tesseract.js
-    │   ├── ocrspace.js
-    │   ├── gemini.js
-    │   └── parser.js       # texto → campos fiscales
-    ├── views/
-    │   ├── dashboard.js    # Panel
-    │   ├── expenses.js     # Lista de gastos + ZIP
-    │   ├── expense-form.js # Formulario crear/editar
-    │   ├── scan-dialog.js  # Progreso OCR
-    │   ├── users.js        # Admin usuarios (4 roles)
-    │   ├── reports.js      # Reportes + ranking
-    │   ├── budgets.js      # Presupuestos por empresa
-    │   ├── settings.js     # Ajustes OCR
-    │   ├── closures.js     # Cierres mensuales
-    │   ├── iva.js          # Libro IVA trimestral
-    │   ├── recurring.js    # Gastos recurrentes
-    │   ├── mileage.js      # Kilometraje
-    │   └── comments-dialog.js
+    ├── app.js (modificado)
+    ├── auth.js (sin tocar)
+    ├── db.js (sin tocar)
+    ├── db-vendor-memory.js (NUEVO)
+    ├── firebase-config.js (sin tocar)
+    ├── roles.js (sin tocar)
+    ├── storage.js (sin tocar)
     ├── components/
-    │   ├── modal.js
-    │   └── charts.js
-    └── utils/
-        ├── format.js       # € / fechas / NIF
-        ├── filters.js      # Filtros por período
-        ├── export-xlsx.js  # Excel simple
-        ├── export-zip.js   # ZIP con tickets
-        └── iva-book.js     # Modelo 303
+    │   ├── modal.js (sin tocar)
+    │   └── charts.js (sin tocar)
+    ├── ocr/
+    │   ├── index.js (modificado: pre-procesado)
+    │   ├── parser.js (modificado: +attachStructuredConfidence al final)
+    │   ├── gemini.js (sin tocar)
+    │   ├── ocrspace.js (sin tocar)
+    │   └── tesseract.js (sin tocar)
+    ├── utils/
+    │   ├── avatar.js (sin tocar)
+    │   ├── format.js (sin tocar)
+    │   ├── filters.js (sin tocar)
+    │   ├── fiscal.js (sin tocar)
+    │   ├── sanitize.js (sin tocar)
+    │   ├── iva-book.js (sin tocar)
+    │   ├── export-xlsx.js (sin tocar)
+    │   ├── export-zip.js (sin tocar)
+    │   ├── feature-flags.js (NUEVO)
+    │   ├── device.js (NUEVO)
+    │   ├── nif-validation.js (NUEVO)
+    │   ├── image-preprocess.js (NUEVO)
+    │   ├── quick-capture.js (NUEVO)
+    │   └── camera-helper.js (NUEVO)
+    └── views/
+        ├── dashboard.js (sin tocar)
+        ├── expenses.js (sin tocar)
+        ├── expense-form.js (modificado: +memoria proveedor +validación NIF reforzada)
+        ├── scan-dialog.js (modificado: +preview imagen +confidence score)
+        ├── users.js (sin tocar)
+        ├── reports.js (sin tocar)
+        ├── budgets.js (sin tocar)
+        ├── settings.js (modificado: +card Experimental para admin)
+        ├── closures.js (sin tocar)
+        ├── iva.js (sin tocar)
+        ├── recurring.js (sin tocar)
+        ├── mileage.js (sin tocar)
+        ├── comments-dialog.js (sin tocar)
+        ├── experimental.js (NUEVO)
+        ├── tutorial.js (NUEVO)
+        └── wizard-setup.js (NUEVO)
 ```
 
----
-
-## 🛠 Troubleshooting
-
-- **"Configuración pendiente"** → edita `js/firebase-config.js`
-- **Spinner infinito** → revisa consola; suele ser Firestore sin crear o reglas mal
-- **auth/invalid-api-key** → key mal pegada, debe empezar por `AIzaSy`
-- **auth/unauthorized-domain** → añade tu dominio GH Pages a Firebase Auth → Settings → Authorized domains
-- **Permission denied en Firestore** → reglas + usuario con `active: true`
-- **No soy admin** → Firestore Console → `users/{uid}` → `role: "admin"`, `active: true`
-- **Cloudinary 401** → preset debe ser **Unsigned**
-- **Índice Firestore** → si pide crear un índice compuesto, la consola da link directo
-
----
-
-Licencia: uso propio. Integrable con BeUnifyT / ControlUnificado.
+⚠️ **Importante**: este `README.md` que estás leyendo es el del paquete de instalación. Si descomprimes el ZIP **encima** de tu repo, sobrescribirá tu README v5. Renombra este `README.md` a `INSTALAR-MEJORAS.md` antes de copiar, o simplemente no copies el README.

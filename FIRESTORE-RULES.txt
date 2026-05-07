@@ -1,0 +1,62 @@
+═══════════════════════════════════════════════════════════════
+REGLAS FIRESTORE NECESARIAS para Paquete 1
+═══════════════════════════════════════════════════════════════
+
+Añade el siguiente bloque dentro de la sección
+`match /databases/{database}/documents { ... }` en
+Firebase Console → Firestore → Rules.
+
+NO REEMPLACES tus reglas existentes. SOLO AÑADE este bloque.
+
+──────────────────────────────────────────────────────────────
+
+    // Memoria de proveedores por NIF (Paquete 1, Mejora 1)
+    // Cualquier usuario autenticado puede leer y escribir.
+    // El NIF (ID del documento) ya identifica al proveedor.
+    match /vendorMemory/{nif} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                    && request.auth.token.email_verified != false;
+    }
+
+──────────────────────────────────────────────────────────────
+
+EXPLICACIÓN
+───────────
+
+¿Por qué allow read a cualquier autenticado?
+  La memoria del proveedor es información compartida. Si la
+  empresa A tuvo un gasto con el proveedor "Bar Pepe", ese dato
+  ayuda a la empresa B en el mismo Firestore. No hay datos
+  sensibles: solo nombre, categoría habitual, IVA habitual.
+
+¿Por qué allow write con email_verified?
+  Para evitar que cuentas spammers/fake llenen la memoria con
+  basura. Si tu auth no usa email verification, simplifica a:
+  
+    allow write: if request.auth != null;
+
+¿Y los datos sensibles?
+  La memoria NO almacena: importes, fechas, nº facturas, ni
+  ningún dato que identifique transacciones individuales. Solo
+  patrones agregados (categoría más usada, IVA habitual, etc.).
+
+──────────────────────────────────────────────────────────────
+
+QUÉ PASA SI NO ACTUALIZAS LAS REGLAS
+─────────────────────────────────────
+
+La feature "Memoria por NIF" intentará leer/escribir y fallará
+con permission-denied. Tras 3 errores, se autodesactiva sola.
+La app NO se rompe, pero la mejora no funciona.
+
+──────────────────────────────────────────────────────────────
+
+CÓMO COMPROBAR QUE LAS REGLAS FUNCIONAN
+────────────────────────────────────────
+
+1. Despliega las reglas en Firebase Console → Firestore → Rules → "Publicar"
+2. Activa la feature `vendor-memory` en la app
+3. Crea un gasto con NIF cualquiera y guarda
+4. En Firebase Console → Firestore Data, busca la colección "vendorMemory"
+5. Debe aparecer un documento con el NIF como ID
